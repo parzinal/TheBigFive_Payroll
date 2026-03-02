@@ -1,0 +1,10 @@
+{
+    "name": "thebigfive/payroll",
+    "description": "Payroll System",
+    "type": "project",
+    "require": {
+        "phpoffice/phpspreadsheet": "^5.4",
+        "spatie/db-dumper": "3.0",
+        "vlucas/phpdotenv": "^5.6"
+    }
+}

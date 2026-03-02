@@ -1,0 +1,446 @@
+=======================================================
+  DTR-Sample-TB5.xlsm COMPREHENSIVE STRUCTURE ANALYSIS
+=======================================================
+File: DTR-Sample-TB5.xlsm
+Size: 89,982 bytes
+Modified: 2026-02-22 08:19:12
+
+Sheet Name: Freedom
+Highest Row: 1000
+Highest Column: AC
+
+=== DETAILED VIEW: ROWS 1-10 (ALL COLUMNS A-AB) ===
+
+>>> ROW 1 <<<
+  A1: "DTR CALCULATOR" [FONT:#404040] [BOLD]
+
+>>> ROW 2 <<<
+  A2: [FORMULA] =DATE!A2 = "Oct. 13-27, 2025" [FONT:#953735]
+  N2: "↓↓↓↓" [FONT:#FF0000] [BOLD]
+  O2: "  ◄   INPUT BASIC MONTHLY SALARY HERE" [BOLD]
+
+>>> ROW 3 <<<
+  A3: "EMPLOYEE NAME: FREEDOM" [BG:#D9D9D9] [BOLD]
+  J3: "0.74027777777778" (displays as: "5:46 PM") [BOLD]
+  K3: "0.33680555555556" (displays as: "8:05 AM") [FONT:#FF0000] [BOLD]
+  L3: "0.70833333333333" (displays as: "5:00 PM") [FONT:#FF0000] [BOLD]
+  M3: "BASIC ►" [FONT:#FF0000] [BOLD]
+  N3: "13000" (displays as: "₱13,000") [FONT:#FF0000] [BOLD]
+  O3: [FORMULA] =$N$3/26 = "500" [FONT:#FF0000] [BOLD]
+  P3: [FORMULA] =($N$3/26)/8 = "62.50" [FONT:#FF0000] [BOLD]
+  Q3: [FORMULA] =($N$3/26)/480 = "1.0417" [FONT:#FF0000] [BOLD]
+  R3: "0.5" (displays as: "0.5") [BOLD]
+  S3: "0.34027777777778" (displays as: "8:10 AM") [BOLD]
+  T3: "neg-₱TOTAL" [BG:#EAEAEA] [BOLD]
+  U3: "AUTOMATIC  CALCULATIONS" [BG:#A6A6A6] [FONT:#FF0000] [BOLD]
+  X3: "(MANUAL)" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  Y3: "Automatic" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  AB3: "REMARKS" [BG:#A6A6A6] [FONT:#FF0000] [BOLD]
+
+>>> ROW 4 <<<
+  A4: "THE BIG FIVE TRAINING AND ASSESSMENT CENTER INC." [BOLD]
+  H4: "ALSO UNDERTIME OR" [BG:#B8CCE4] [BOLD]
+  J4: "0.73958333333333" (displays as: "5:45 PM") [BOLD]
+  K4: "0.3375" (displays as: "8:06 AM") [BOLD]
+  L4: "0.34444444444444" (displays as: "8:16 AM") [BOLD]
+  N4: "VARIABLE" [FONT:#FF0000] [BOLD]
+  O4: "PER/DAY"
+  P4: "PER/MIN"
+  Q4: "PER/HOUR" [BOLD]
+  R4: "AUTOMATIC" [BOLD]
+  S4: "0.34375" (displays as: "8:15 AM") [BOLD]
+  T4: "DEDUCTIONS" [BG:#A6A6A6] [BOLD]
+  U4: "AUTO" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  V4: "AUTO" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  W4: "AUTO" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  X4: "CA ADV.+" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  Y4: "TOTAL" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+
+>>> ROW 5 <<<
+  A5: "MO/YR" [BG:#BFBFBF] [BOLD]
+  B5: "AM" [BG:#B6DEE8] [FONT:#002060] [BOLD]
+  C5: "AM" [BG:#B6DEE8] [FONT:#002060] [BOLD]
+  D5: "PM" [BG:#FABF8F] [BOLD]
+  E5: "PM" [BG:#FABF8F] [BOLD]
+  F5: "ABSENT" [BG:#808080] [FONT:#FFFFFF] [BOLD]
+  G5: "OT" [BG:#A6A6A6] [FONT:#002060] [BOLD]
+  H5: "HALFDAY" [BG:#FDEADA] [FONT:#002060] [BOLD]
+  I5: "HALFDAY" [BG:#FDEADA] [FONT:#002060] [BOLD]
+  J5: "TOT.WORK" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  K5: "(in mins)" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  L5: "(in hours)" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  M5: "(in hours)" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  N5: "(in day)" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  O5: "(ABSENT)" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  P5: "LATE/MIN" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  Q5: "UNDERTM" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  R5: "HALFDAY" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  S5: "OT" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  T5: "MINUS OT" [BG:#A6A6A6] [BOLD]
+  U5: "COPY" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  V5: "COPY" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  W5: "COPY" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  X5: "GOV'T." [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  Y5: "NET" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+
+>>> ROW 6 <<<
+  A6: "DATE" [FONT:#FF0000] [BOLD]
+  B6: "IN" [FONT:#FF0000] [BOLD]
+  C6: "OUT" [FONT:#FF0000] [BOLD]
+  D6: "IN" [FONT:#FF0000] [BOLD]
+  E6: "OUT" [FONT:#FF0000] [BOLD]
+  F6: "Column" [BG:#808080] [FONT:#FFFFFF] [BOLD]
+  G6: "OUT" [BG:#A6A6A6] [FONT:#FF0000] [BOLD]
+  H6: "IN" [FONT:#FF0000] [BOLD]
+  I6: "OUT" [FONT:#FF0000] [BOLD]
+  J6: "HOURS" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  K6: "LATE" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  L6: "UNDERTM" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  M6: "OT" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  N6: "ABSENT" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  O6: "DEDUCT" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  P6: "DEDUCT" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  Q6: "DEDUCT" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  R6: "DEDUCT" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  S6: "PAYMENT" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  T6: "(OT PAY)" [BG:#A6A6A6] [BOLD]
+  U6: "LATE/min" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  V6: "UNDERTIME" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  W6: "OT" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  X6: "BENEFITS" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  Y6: "SALARY" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  Z6: "F1*" [BG:#A6A6A6] [FONT:#FFFFFF] [BOLD]
+  AA6: "F2*" [BG:#A6A6A6] [FONT:#FF0000] [BOLD]
+  AB6: "Rremarks" [BG:#A6A6A6]
+
+>>> ROW 7 <<<
+  A7: "1" (displays as: "1") [BOLD]
+  G7: [FORMULA] =IF(E7>$J$4,E7,"") = "" [BOLD]
+  J7: [FORMULA] =(MOD(E7-B7,1)*24)-1 = "-" [FONT:#FFFFFF] [BOLD]
+  K7: [FORMULA] =(MOD(B7-$K$3,1)*1440) = "955" [FONT:#FFFFFF] [BOLD]
+  L7: [FORMULA] =MOD($L$3-E7,1)*24 = "17.0" [FONT:#FFFFFF] [BOLD]
+  M7: [FORMULA] =((MOD(G7-$L$3,1)*24)+(IF(B7<$S$3,"+0.00","-0.5")))-(IF(G7<$J$3,"-0.5","0")) = "#VALUE!" [FONT:#FFFFFF] [BOLD]
+  N7: [FORMULA] =COUNTIF(B7:H7,"ABSENT") = "" [FONT:#FF0000] [BOLD]
+  O7: [FORMULA] =($N$3/26)*N7 = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  P7: [FORMULA] =$Q$3*U7 = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  Q7: [FORMULA] =$P$3*V7 = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  R7: [FORMULA] =($O$3*AA7)-(MOD(I7-H7,1)*24.29)*$P$3 = "" [FONT:#FFFFFF] [BOLD]
+  S7: [FORMULA] =($P$3*W7)*125% = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  T7: [FORMULA] =S7-SUM(O7:R7) = "" [BG:#EAEAEA] [BOLD]
+  U7: [FORMULA] =IF(AND(K7>499,K7>=271),0,IF(K7<=270,K7,0)) = "  - " [FONT:#FFFFFF] [BOLD]
+  V7: [FORMULA] =IF(AND(L7>17,L7>=17),0,IF(L7<=15,L7,0)) = "  -  " [FONT:#FFFFFF] [BOLD]
+  W7: [FORMULA] =IFERROR(M7*1,0) = "" [FONT:#FFFFFF] [BOLD]
+  Z7: [FORMULA] =COUNTBLANK(I7) = "1" [BOLD]
+  AA7: [FORMULA] =COUNTIF(Z7,"0") = "" [BOLD]
+
+>>> ROW 8 <<<
+  A8: "2" (displays as: "2") [BOLD]
+  G8: [FORMULA] =IF(E8>$J$4,E8,"") = "" [BOLD]
+  J8: [FORMULA] =(MOD(E8-B8,1)*24)-1 = "-" [FONT:#FFFFFF] [BOLD]
+  K8: [FORMULA] =(MOD(B8-$K$3,1)*1440) = "955" [FONT:#FFFFFF] [BOLD]
+  L8: [FORMULA] =MOD($L$3-E8,1)*24 = "17.0" [FONT:#FFFFFF] [BOLD]
+  M8: [FORMULA] =((MOD(G8-$L$3,1)*24)+(IF(B8<$S$3,"+0.00","-0.5")))-(IF(G8<$J$3,"-0.5","0")) = "#VALUE!" [FONT:#FFFFFF] [BOLD]
+  N8: [FORMULA] =COUNTIF(B8:H8,"ABSENT") = "" [FONT:#FF0000] [BOLD]
+  O8: [FORMULA] =($N$3/26)*N8 = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  P8: [FORMULA] =$Q$3*U8 = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  Q8: [FORMULA] =$P$3*V8 = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  R8: [FORMULA] =($O$3*AA8)-(MOD(I8-H8,1)*24.29)*$P$3 = "" [FONT:#FFFFFF] [BOLD]
+  S8: [FORMULA] =($P$3*W8)*125% = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  T8: [FORMULA] =S8-SUM(O8:R8) = "" [BG:#EAEAEA] [BOLD]
+  U8: [FORMULA] =IF(AND(K8>499,K8>=271),0,IF(K8<=270,K8,0)) = "  - " [FONT:#FFFFFF] [BOLD]
+  V8: [FORMULA] =IF(AND(L8>17,L8>=17),0,IF(L8<=15,L8,0)) = "  -  " [FONT:#FFFFFF] [BOLD]
+  W8: [FORMULA] =IFERROR(M8*1,0) = "" [FONT:#FFFFFF] [BOLD]
+  Z8: [FORMULA] =COUNTBLANK(I8) = "1" [BOLD]
+  AA8: [FORMULA] =COUNTIF(Z8,"0") = "" [BOLD]
+
+>>> ROW 9 <<<
+  A9: "3" (displays as: "3") [BOLD]
+  G9: [FORMULA] =IF(E9>$J$4,E9,"") = "" [BOLD]
+  J9: [FORMULA] =(MOD(E9-B9,1)*24)-1 = "-" [FONT:#FFFFFF] [BOLD]
+  K9: [FORMULA] =(MOD(B9-$K$3,1)*1440) = "955" [FONT:#FFFFFF] [BOLD]
+  L9: [FORMULA] =MOD($L$3-E9,1)*24 = "17.0" [FONT:#FFFFFF] [BOLD]
+  M9: [FORMULA] =((MOD(G9-$L$3,1)*24)+(IF(B9<$S$3,"+0.00","-0.5")))-(IF(G9<$J$3,"-0.5","0")) = "#VALUE!" [FONT:#FFFFFF] [BOLD]
+  N9: [FORMULA] =COUNTIF(B9:H9,"ABSENT") = "" [FONT:#FF0000] [BOLD]
+  O9: [FORMULA] =($N$3/26)*N9 = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  P9: [FORMULA] =$Q$3*U9 = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  Q9: [FORMULA] =$P$3*V9 = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  R9: [FORMULA] =($O$3*AA9)-(MOD(I9-H9,1)*24.29)*$P$3 = "" [FONT:#FFFFFF] [BOLD]
+  S9: [FORMULA] =($P$3*W9)*125% = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  T9: [FORMULA] =S9-SUM(O9:R9) = "" [BG:#EAEAEA] [BOLD]
+  U9: [FORMULA] =IF(AND(K9>499,K9>=271),0,IF(K9<=270,K9,0)) = "  - " [FONT:#FFFFFF] [BOLD]
+  V9: [FORMULA] =IF(AND(L9>17,L9>=17),0,IF(L9<=15,L9,0)) = "  -  " [FONT:#FFFFFF] [BOLD]
+  W9: [FORMULA] =IFERROR(M9*1,0) = "" [FONT:#FFFFFF] [BOLD]
+  Z9: [FORMULA] =COUNTBLANK(I9) = "1" [BOLD]
+  AA9: [FORMULA] =COUNTIF(Z9,"0") = "" [BOLD]
+
+>>> ROW 10 <<<
+  A10: "4" (displays as: "4") [BOLD]
+  G10: [FORMULA] =IF(E10>$J$4,E10,"") = "" [BOLD]
+  J10: [FORMULA] =(MOD(E10-B10,1)*24)-1 = "-" [FONT:#FFFFFF] [BOLD]
+  K10: [FORMULA] =(MOD(B10-$K$3,1)*1440) = "955" [FONT:#FFFFFF] [BOLD]
+  L10: [FORMULA] =MOD($L$3-E10,1)*24 = "17.0" [FONT:#FFFFFF] [BOLD]
+  M10: [FORMULA] =((MOD(G10-$L$3,1)*24)+(IF(B10<$S$3,"+0.00","-0.5")))-(IF(G10<$J$3,"-0.5","0")) = "#VALUE!" [FONT:#FFFFFF] [BOLD]
+  N10: [FORMULA] =COUNTIF(B10:H10,"ABSENT") = "" [FONT:#FF0000] [BOLD]
+  O10: [FORMULA] =($N$3/26)*N10 = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  P10: [FORMULA] =$Q$3*U10 = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  Q10: [FORMULA] =$P$3*V10 = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  R10: [FORMULA] =($O$3*AA10)-(MOD(I10-H10,1)*24.29)*$P$3 = "" [FONT:#FFFFFF] [BOLD]
+  S10: [FORMULA] =($P$3*W10)*125% = "₱0.00" [FONT:#FFFFFF] [BOLD]
+  T10: [FORMULA] =S10-SUM(O10:R10) = "" [BG:#EAEAEA] [BOLD]
+  U10: [FORMULA] =IF(AND(K10>499,K10>=271),0,IF(K10<=270,K10,0)) = "  - " [FONT:#FFFFFF] [BOLD]
+  V10: [FORMULA] =IF(AND(L10>17,L10>=17),0,IF(L10<=15,L10,0)) = "  -  " [FONT:#FFFFFF] [BOLD]
+  W10: [FORMULA] =IFERROR(M10*1,0) = "" [FONT:#FFFFFF] [BOLD]
+  Z10: [FORMULA] =COUNTBLANK(I10) = "1" [BOLD]
+  AA10: [FORMULA] =COUNTIF(Z10,"0") = "" [BOLD]
+
+=== RATE CONFIGURATION (ROW 3) ===
+This row contains the calculation parameters:
+  N3 (Basic Monthly): ₱13,000
+  O3 (Per Day): =$N$3/26 = 500
+  P3 (Per Minute): =($N$3/26)/8 = 62.50
+  Q3 (Per Hour): =($N$3/26)/480 = 1.0417
+
+=== ROW 4 - REFERENCE TIMES ===
+  J4: 5:45 PM (Referenced as $J$4 in formulas)
+  K4: 8:06 AM (Referenced as $K$3 in formulas - shift start time)
+  L4: 8:16 AM (Referenced as $L$3 in formulas - shift end time)
+  S4: 8:15 AM
+
+=== COLUMN HEADERS (ROWS 5-6) ===
+
+ROW 5 (Main category headers):
+  A: MO/YR
+  B: AM
+  C: AM
+  D: PM
+  E: PM
+  F: ABSENT
+  G: OT
+  H: HALFDAY
+  I: HALFDAY
+  J: TOT.WORK
+  K: (in mins)
+  L: (in hours)
+  M: (in hours)
+  N: (in day)
+  O: (ABSENT)
+  P: LATE/MIN
+  Q: UNDERTM
+  R: HALFDAY
+  S: OT
+  T: MINUS OT
+  U: COPY
+  V: COPY
+  W: COPY
+  X: GOV'T.
+  Y: NET
+
+ROW 6 (Detailed column headers):
+  A: DATE
+  B: IN
+  C: OUT
+  D: IN
+  E: OUT
+  F: Column
+  G: OUT
+  H: IN
+  I: OUT
+  J: HOURS
+  K: LATE
+  L: UNDERTM
+  M: OT
+  N: ABSENT
+  O: DEDUCT
+  P: DEDUCT
+  Q: DEDUCT
+  R: DEDUCT
+  S: PAYMENT
+  T: (OT PAY)
+  U: LATE/min
+  V: UNDERTIME
+  W: OT
+  X: BENEFITS
+  Y: SALARY
+  Z: F1*
+  AA: F2*
+  AB: Rremarks
+  AA: F2*
+  AB: Rremarks
+
+=== SAMPLE DATA ROWS 7-12 ===
+
+Row 7:
+  A (Date): 1
+  B (AM In): 
+  C (AM Out): 
+  D (PM In): 
+  E (PM Out): 
+  F (Absent): 
+  G (OT Out): =IF(E7>$J$4,E7,"")
+  H (Halfday In): 
+  I (Halfday Out): 
+  J (Tot Work Hours): =(MOD(E7-B7,1)*24)-1
+  K (Late mins): =(MOD(B7-$K$3,1)*1440)
+  L (Undertime hrs): =MOD($L$3-E7,1)*24
+  M (OT hours): =((MOD(G7-$L$3,1)*24)+(IF(B7<$S$3,"+0.00","-0.5")))-(IF(G7<$J$3,"-0.5","0"))
+
+Row 8:
+  A (Date): 2
+  B (AM In): 
+  C (AM Out): 
+  D (PM In): 
+  E (PM Out): 
+  F (Absent): 
+  G (OT Out): =IF(E8>$J$4,E8,"")
+  H (Halfday In): 
+  I (Halfday Out): 
+  J (Tot Work Hours): =(MOD(E8-B8,1)*24)-1
+  K (Late mins): =(MOD(B8-$K$3,1)*1440)
+  L (Undertime hrs): =MOD($L$3-E8,1)*24
+  M (OT hours): =((MOD(G8-$L$3,1)*24)+(IF(B8<$S$3,"+0.00","-0.5")))-(IF(G8<$J$3,"-0.5","0"))
+
+Row 9:
+  A (Date): 3
+  B (AM In): 
+  C (AM Out): 
+  D (PM In): 
+  E (PM Out): 
+  F (Absent): 
+  G (OT Out): =IF(E9>$J$4,E9,"")
+  H (Halfday In): 
+  I (Halfday Out): 
+  J (Tot Work Hours): =(MOD(E9-B9,1)*24)-1
+  K (Late mins): =(MOD(B9-$K$3,1)*1440)
+  L (Undertime hrs): =MOD($L$3-E9,1)*24
+  M (OT hours): =((MOD(G9-$L$3,1)*24)+(IF(B9<$S$3,"+0.00","-0.5")))-(IF(G9<$J$3,"-0.5","0"))
+
+Row 10:
+  A (Date): 4
+  B (AM In): 
+  C (AM Out): 
+  D (PM In): 
+  E (PM Out): 
+  F (Absent): 
+  G (OT Out): =IF(E10>$J$4,E10,"")
+  H (Halfday In): 
+  I (Halfday Out): 
+  J (Tot Work Hours): =(MOD(E10-B10,1)*24)-1
+  K (Late mins): =(MOD(B10-$K$3,1)*1440)
+  L (Undertime hrs): =MOD($L$3-E10,1)*24
+  M (OT hours): =((MOD(G10-$L$3,1)*24)+(IF(B10<$S$3,"+0.00","-0.5")))-(IF(G10<$J$3,"-0.5","0"))
+
+Row 11:
+  A (Date): 5
+  B (AM In): 
+  C (AM Out): 
+  D (PM In): 
+  E (PM Out): 
+  F (Absent): 
+  G (OT Out): =IF(E11>$J$4,E11,"")
+  H (Halfday In): 
+  I (Halfday Out): 
+  J (Tot Work Hours): =(MOD(E11-B11,1)*24)-1
+  K (Late mins): =(MOD(B11-$K$3,1)*1440)
+  L (Undertime hrs): =MOD($L$3-E11,1)*24
+  M (OT hours): =((MOD(G11-$L$3,1)*24)+(IF(B11<$S$3,"+0.00","-0.5")))-(IF(G11<$J$3,"-0.5","0"))
+
+Row 12:
+  A (Date): 6
+  B (AM In): 
+  C (AM Out): 
+  D (PM In): 
+  E (PM Out): 
+  F (Absent): 
+  G (OT Out): =IF(E12>$J$4,E12,"")
+  H (Halfday In): 
+  I (Halfday Out): 
+  J (Tot Work Hours): =(MOD(E12-B12,1)*24)-1
+  K (Late mins): =(MOD(B12-$K$3,1)*1440)
+  L (Undertime hrs): =MOD($L$3-E12,1)*24
+  M (OT hours): =((MOD(G12-$L$3,1)*24)+(IF(B12<$S$3,"+0.00","-0.5")))-(IF(G12<$J$3,"-0.5","0"))
+
+=== KEY FORMULAS (Using Row 7 as example) ===
+
+Column G (OT Out):
+  =IF(E7>$J$4,E7,"")
+  Logic: Display OT out time if PM out time exceeds threshold
+
+Column J (Total Work Hours):
+  =(MOD(E7-B7,1)*24)-1
+  Logic: Calculate work hours from time entries
+
+Column K (Late in Minutes):
+  =(MOD(B7-$K$3,1)*1440)
+  Logic: Calculate minutes late based on shift start time
+
+Column L (Undertime in Hours):
+  =MOD($L$3-E7,1)*24
+  Logic: Calculate undertime hours
+
+Column M (OT Hours):
+  =((MOD(G7-$L$3,1)*24)+(IF(B7<$S$3,"+0.00","-0.5")))-(IF(G7<$J$3,"-0.5","0"))
+  Logic: Complex OT calculation with adjustments
+
+Column N (Absent Days):
+  =COUNTIF(B7:H7,"ABSENT")
+  Logic: Count ABSENT markers in time entry columns
+
+Column O (Absent Deduction):
+  =($N$3/26)*N7
+  Logic: Per-day rate × absent days
+
+Column P (Late Deduction):
+  =$Q$3*U7
+  Logic: Per-minute rate × late minutes (from column U)
+
+Column Q (Undertime Deduction):
+  =$P$3*V7
+  Logic: Per-minute rate × undertime minutes (from column V)
+
+Column R (Halfday Deduction):
+  =($O$3*AA7)-(MOD(I7-H7,1)*24.29)*$P$3
+  Logic: Complex calculation involving halfday entries
+
+Column S (OT Payment):
+  =($P$3*W7)*125%
+  Logic: Per-minute rate × OT minutes × 125% (from column W)
+
+Column T (Total Day Adjustment):
+  =S7-SUM(O7:R7)
+  Logic: OT payment minus all deductions
+
+Columns U, V, W (Helper calculations):
+  U7: =IF(AND(K7>499,K7>=271),0,IF(K7<=270,K7,0)) (Late minutes for calculation)
+  V7: =IF(AND(L7>17,L7>=17),0,IF(L7<=15,L7,0)) (Undertime minutes)
+  W7: =IFERROR(M7*1,0) (OT hours clean)
+
+=== MERGED CELLS ===
+  Y38:AA38: "₱3457.50 "
+  N41:O41: "Days Office"
+  N43:O43: "No. of Trainings"
+  N44:O44: "Total cost Trainings"
+  A2:G2: "Oct. 13-27, 2025"
+  A3:I3: "EMPLOYEE NAME: FREEDOM"
+  U3:W3: "AUTOMATIC  CALCULATIONS"
+  A4:G4: "THE BIG FIVE TRAINING AND ASSESSMENT CENTER INC."
+
+=== COLOR SCHEME SUMMARY ===
+  - Gray (#D9D9D9): Employee info row
+  - Light Blue (#B6DEE8): AM time columns
+  - Orange (#FABF8F): PM time columns
+  - Dark Gray (#808080): Absent column
+  - Peach (#FDEADA): Halfday columns
+  - Dark Gray (#A6A6A6): Calculation columns
+  - Black (#000000): Data rows (cells with formulas)
+  - Light Gray (#EAEAEA): Total column (T)
+
+=== STRUCTURE SUMMARY ===
+Row 1: Title 'DTR CALCULATOR'
+Row 2: Date range (merged A2:G2) + Input instruction in O2
+Row 3: Employee name (merged A3:I3) + Rate configuration (N3:Q3)
+Row 4: Company name (merged A4:G4) + Reference times (J4, K4, L4, S4)
+Row 5: Main category headers
+Row 6: Detailed column headers
+Rows 7-37: Data rows (31 days of DTR)
+Row 38-39: Totals and summaries
+Row 41-44: Additional calculations (office days, training costs)

@@ -1,0 +1,47 @@
+# ============================================
+# TheBigFive Payroll System — .gitignore
+# ============================================
+
+# Environment files (NEVER commit credentials)
+.env
+.env.local
+.env.*.local
+
+# Composer dependencies (install via: composer install)
+/vendor/
+
+# Database backups (may contain sensitive data)
+/backups/*.sql
+/backups/*.gz
+
+# IDE / Editor files
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# PHP logs
+*.log
+php_errors.log
+
+# OS files
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+
+# Temporary / test files
+test_*.php
+analysis_output.txt
+brace_output.txt
+
+# Excel temp files
+~$*.xlsx
+~$*.xlsm
+~$*.xls
