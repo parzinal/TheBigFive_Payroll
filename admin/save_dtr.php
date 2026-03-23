@@ -45,6 +45,7 @@ try {
     $periodStart = $_POST['period_start'] ?? null;
     $periodEnd = $_POST['period_end'] ?? null;
     $dtrRecordsJson = $_POST['dtr_records'] ?? '[]';
+    $dayOverrideMetaJson = $_POST['day_override_meta'] ?? '';
 
     // Totals passed from main DTR table
     $totalLateHours      = floatval($_POST['total_late_hours']      ?? 0);
@@ -70,6 +71,7 @@ try {
     $trainingsCount = intval($_POST['trainings_count'] ?? 0);
     $paymentPerTrainee = floatval($_POST['payment_per_trainee'] ?? 0);
     $trainingsCost = floatval($_POST['trainings_cost'] ?? 0);
+    $otRateFromPost = isset($_POST['ot_rate']) ? floatval($_POST['ot_rate']) : null;
     
     // Get per_day_rate from POST if provided (preserves correct rate when Sunday work is included)
     // If not provided, will be calculated later from salary ÷ 26
@@ -82,6 +84,14 @@ try {
     $dtrRecords = json_decode($dtrRecordsJson, true);
     if (!is_array($dtrRecords) || empty($dtrRecords)) {
         throw new Exception('No DTR records provided');
+    }
+
+    $dayOverrideMeta = null;
+    if (is_string($dayOverrideMetaJson) && trim($dayOverrideMetaJson) !== '') {
+        $decodedDayOverrideMeta = json_decode($dayOverrideMetaJson, true);
+        if (is_array($decodedDayOverrideMeta)) {
+            $dayOverrideMeta = $decodedDayOverrideMeta;
+        }
     }
     
     // ================================================================
@@ -343,8 +353,10 @@ try {
             'per_day_rate'    => $perDayRate,
             'per_hour_rate'   => $perHourRate,
             'per_minute_rate' => $perMinuteRate,
+            'ot_rate'         => ($otRateFromPost !== null && $otRateFromPost > 0) ? $otRateFromPost : null,
             'standard_hours'  => $totalWorkHoursSum,
             'overtime_hours'  => $totalOtHours,
+            'day_override'    => $dayOverrideMeta,
         ]);
 
         // Check if payroll computation exists

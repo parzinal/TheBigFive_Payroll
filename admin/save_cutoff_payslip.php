@@ -102,6 +102,12 @@ $notes = [
     'cutoff_label' => $data['cutoff_label'] ?? ($cutoffType === 'first' ? '1st Cutoff (Day 1-15)' : '2nd Cutoff (Day 16-End)'),
     'ot_rate'      => floatval($data['ot_rate'] ?? 0),
     'source_computation_id' => intval($data['source_computation_id'] ?? 0),
+    'dtr_data' => [
+        'late_deduct'      => floatval($data['late_deduct'] ?? 0),
+        'undertime_deduct' => floatval($data['undertime_deduct'] ?? 0),
+        'halfday_deduct'   => floatval($data['halfday_deduct'] ?? 0),
+        'absent_deduct'    => floatval($data['absent_deduct'] ?? 0),
+    ],
 ];
 
 try {

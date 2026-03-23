@@ -391,7 +391,7 @@ $payroll_periods = $stmt->fetchAll();
                                         <th rowspan="3" class="th-deduct">UNDERTIME<br>DEDUCT</th>
                                         <th rowspan="3" class="th-deduct">HALFDAY<br>DEDUCT</th>
                                         <th rowspan="3" class="th-pay">OT PAY</th>
-                                        <th rowspan="3" class="th-calc">MINUS OT<br>TOTAL<br>DEDUCTIONS</th>
+                                        <th rowspan="3" class="th-pay">OT PAY</th>
                                         <th colspan="3" class="th-group th-auto-calc">AUTOMATIC CALCULATIONS</th>
                                         <th rowspan="3" class="th-manual">Government<br>Benefits</th>
                                         <th rowspan="3" class="th-auto-salary">Net<br>Salary</th>
@@ -493,15 +493,9 @@ $payroll_periods = $stmt->fetchAll();
 
                         <!-- Save to Payroll Action Bar -->
                         <div class="dtr-save-bar" id="dtr_save_bar">
-                            <div class="dtr-save-bar-left">
-                                <span class="save-info-text">
-                                    <i class="fas fa-info-circle"></i>
-                                    Review all DTR entries above, then save to link this payroll record to the selected employee.
-                                </span>
-                            </div>
                             <div class="dtr-save-bar-right">
-                                <button type="button" class="btn-recalculate" onclick="recalculateAllDTR()" title="Recalculate all rows" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; margin-right: 8px;">
-                                    <i class="fas fa-calculator"></i> Recalculate All
+                                <button type="button" class="btn-recalculate" onclick="recalculateAllDTR()" title="Recalculate all rows">
+                                    <i class="fas fa-calculator"></i> Recalculate
                                 </button>
                                 <button type="button" id="btn_save_main_dtr" class="btn-save-payroll" onclick="saveMainDTRToDatabase()">
                                     <i class="fas fa-save"></i> Save to Payroll List
@@ -2130,17 +2124,17 @@ $payroll_periods = $stmt->fetchAll();
 .dtr-save-bar {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 20px;
+    justify-content: flex-end;
+    gap: 14px;
     margin-top: 20px;
-    padding: 16px 24px;
-    background: linear-gradient(135deg, #1a202c 0%, #2d3748 100%);
-    border-radius: 10px;
-    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+    padding: 0;
+    background: transparent;
+    border-radius: 0;
+    box-shadow: none;
 }
 
 .dtr-save-bar-left {
-    flex: 1;
+    display: none;
 }
 
 .save-info-text {
@@ -2157,7 +2151,37 @@ $payroll_periods = $stmt->fetchAll();
 }
 
 .dtr-save-bar-right {
-    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    gap: 14px;
+    flex-wrap: wrap;
+}
+
+.btn-recalculate {
+    background: linear-gradient(135deg, #17a2b8 0%, #138496 100%);
+    color: #fff;
+    border: none;
+    padding: 14px 32px;
+    border-radius: 8px;
+    font-size: 15px;
+    font-weight: 700;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    gap: 10px;
+    transition: all 0.2s ease;
+    box-shadow: 0 4px 12px rgba(23, 162, 184, 0.35);
+    letter-spacing: 0.3px;
+}
+
+.btn-recalculate:hover {
+    background: linear-gradient(135deg, #138496 0%, #0f6674 100%);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 16px rgba(23, 162, 184, 0.45);
+}
+
+.btn-recalculate:active {
+    transform: translateY(0);
 }
 
 .btn-save-payroll {
@@ -2192,6 +2216,12 @@ $payroll_periods = $stmt->fetchAll();
     cursor: not-allowed;
     transform: none;
     box-shadow: none;
+}
+
+/* Hard guard: never show Save All in manual mode */
+body.manual-payroll-mode .btn-save-all,
+body.manual-payroll-mode #btn_save_all_dtr {
+    display: none !important;
 }
 
 .payslip-footer {
@@ -3177,7 +3207,7 @@ input.time24:focus {
 
 /* Day OVR segmented switch (inline so it always applies on this page) */
 .tb5-switch-item {
-    min-width: 220px;
+    min-width: 182px;
 }
 
 .tb5-switch-item .segment-switch-wrap {
@@ -3194,14 +3224,14 @@ input.time24:focus {
 
 .tb5-switch-item .segment-switch-track {
     position: relative;
-    width: 192px;
-    height: 46px;
+    width: 164px;
+    height: 36px;
     display: grid;
     grid-template-columns: 1fr 1fr;
     align-items: stretch;
     overflow: hidden;
     border: 1px solid #c8cdd4;
-    border-radius: 13px;
+    border-radius: 10px;
     background: linear-gradient(180deg, #eef2f7 0%, #d8dee7 100%);
     box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.7);
 }
@@ -3214,15 +3244,15 @@ input.time24:focus {
     width: 50%;
     height: calc(100% - 2px);
     z-index: 1;
-    border-radius: 12px;
-    background: linear-gradient(180deg, #ffdca8 0%, #ffc977 100%);
+    border-radius: 9px;
+    background: linear-gradient(180deg, #b7f7c6 0%, #74d98f 100%);
     box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 2px 6px rgba(0, 0, 0, 0.12);
     transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.25s ease;
 }
 
 .tb5-switch-item .segment-switch-track.checked-mode::before {
     transform: translateX(100%);
-    background: linear-gradient(180deg, #9dd3ff 0%, #6eb8ff 100%);
+    background: linear-gradient(180deg, #bcdcff 0%, #7fb5ff 100%);
 }
 
 .tb5-switch-item .segment-option,
@@ -3239,7 +3269,7 @@ input.time24:focus {
     user-select: none;
     background: transparent;
     color: #2f3a47;
-    font-size: 14px;
+    font-size: 12px;
     font-weight: 700;
     line-height: 1;
     appearance: none;
@@ -3259,7 +3289,7 @@ input.time24:focus {
 }
 
 .tb5-switch-item .segment-btn#checked_days_default_btn.active {
-    color: #7a3f00;
+    color: #14532d;
 }
 
 .tb5-switch-item .segment-btn#checked_days_checked_btn.active {
@@ -3269,6 +3299,29 @@ input.time24:focus {
 .tb5-switch-item .segment-btn:focus-visible {
     outline: 2px solid #60a5fa;
     outline-offset: 2px;
+}
+
+/* Checked mode blue theme for header fields */
+.tb5-rate-row.checked-days-theme {
+    background: linear-gradient(135deg, #eff6ff 0%, #dbeafe 100%);
+    border-bottom-color: #93c5fd;
+}
+
+.tb5-rate-row.checked-days-theme .tb5-rate-label,
+.tb5-rate-row.checked-days-theme .tb5-label {
+    color: #1e3a8a;
+}
+
+.checked-days-editing {
+    border-color: #3b82f6 !important;
+    background: linear-gradient(to bottom, #eff6ff 0%, #dbeafe 100%) !important;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.22) !important;
+}
+
+.checked-days-editing-wrapper {
+    background: linear-gradient(180deg, #cfe3ff 0%, #a8cbff 100%) !important;
+    border-color: #3b82f6 !important;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.2) !important;
 }
 
 /* 24-hour time input styling - Modern Design */
@@ -4894,9 +4947,15 @@ function updateSaveAllButton() {
     const saveAllBtn = document.getElementById('btn_save_all_dtr');
     const saveOneBtn = document.getElementById('btn_save_main_dtr');
     const countSpan = document.getElementById('save_all_count');
+    const isImportMode = currentPayrollMode === 'import';
+    const hasImportedTabs = tabCount > 0;
+    const importedSection = document.getElementById('imported_data_section');
+    const tabsBar = document.getElementById('employee_tabs_bar');
+    const hasVisibleImportContext = (importedSection && importedSection.style.display !== 'none') ||
+                                    (tabsBar && tabsBar.style.display !== 'none');
 
-    if (tabCount > 1) {
-        // Multiple tabs: show Save All, keep single save too
+    if (isImportMode && hasImportedTabs && hasVisibleImportContext && tabCount > 1) {
+        // Show only for imported Excel mode with multiple imported tabs.
         if (saveAllBtn) { saveAllBtn.style.display = 'inline-flex'; }
         if (countSpan) countSpan.textContent = tabCount;
     } else {
@@ -5137,6 +5196,7 @@ function saveSingleTabToDatabase(tabId) {
         // Send classification from the tab (normalize server-side)
         formData.append('classification', tab.classification || currentEmployeeClassification || '');
         formData.append('dtr_records',  JSON.stringify(dtrRecords));
+        formData.append('day_override_meta', JSON.stringify(buildDayOverrideMetaForSave()));
         formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '');
 
         fetch('save_dtr.php', {
@@ -5158,6 +5218,8 @@ function saveSingleTabToDatabase(tabId) {
 function switchPayrollMode(mode) {
     if (mode === currentPayrollMode) return;
     currentPayrollMode = mode;
+
+    document.body.classList.toggle('manual-payroll-mode', mode === 'manual');
     
     const importSection = document.getElementById('import_mode_section');
     const manualSection = document.getElementById('manual_mode_section');
@@ -5192,6 +5254,10 @@ function switchPayrollMode(mode) {
         manualSection.style.display = 'block';
         importBtn.classList.remove('active');
         manualBtn.classList.add('active');
+
+        // Manual mode should never show Save All button.
+        const saveAllBtn = document.getElementById('btn_save_all_dtr');
+        if (saveAllBtn) saveAllBtn.style.display = 'none';
         
         // Hide DTR calculator until employee selected
         payslipForm.style.display = 'none';
@@ -5201,6 +5267,9 @@ function switchPayrollMode(mode) {
         if (importedSection) importedSection.style.display = 'none';
         clearImportedData();
     }
+
+    // Re-evaluate Save All visibility using current mode.
+    updateSaveAllButton();
 }
 
 // ================================================================
@@ -5677,6 +5746,7 @@ window.dayOverrideValues = {};
 window.checkedDaysEditMode = false;
 window.checkedDaysDefaultSnapshot = null;
 window.checkedDaysOverrideSnapshot = null;
+window.isSwitchingCheckedMode = false;
 
 function getCurrentDayOverrideEditableValues() {
     return {
@@ -5695,6 +5765,19 @@ function getCurrentCheckedDaysValues() {
     };
 }
 
+function syncCurrentModeSnapshotFromHeader() {
+    const values = getCurrentCheckedDaysValues();
+    if (window.checkedDaysEditMode) {
+        window.checkedDaysOverrideSnapshot = values;
+        return;
+    }
+
+    // Only treat current header as default when not editing a per-day override row.
+    if (!getActiveDayOverrideRow()) {
+        window.checkedDaysDefaultSnapshot = values;
+    }
+}
+
 function getCheckedDayOverrideRows() {
     const rows = [];
     document.querySelectorAll('.dtr-day-override-toggle').forEach(toggle => {
@@ -5704,6 +5787,47 @@ function getCheckedDayOverrideRows() {
         }
     });
     return rows;
+}
+
+function buildDayOverrideMetaForSave() {
+    const defaultSnapshot = window.checkedDaysDefaultSnapshot || getCurrentCheckedDaysValues();
+    const checkedSnapshot = window.checkedDaysOverrideSnapshot || defaultSnapshot;
+    const checkedRows = [];
+    const rowValues = {};
+
+    document.querySelectorAll('.dtr-day-override-toggle').forEach(toggle => {
+        const rowNum = String(toggle.getAttribute('data-row') || '');
+        if (!rowNum || !toggle.checked || toggle.disabled) return;
+
+        const dateInput = document.querySelector(`input[name="dtr_date_${rowNum}"]`) || document.querySelector(`input[name="tb5_date_${rowNum}"]`);
+        const rowDate = dateInput?.value ? String(dateInput.value) : '';
+        if (!rowDate) return;
+
+        checkedRows.push(rowDate);
+        if (window.dayOverrideValues && window.dayOverrideValues[rowNum]) {
+            rowValues[rowDate] = {
+                perDay: String(window.dayOverrideValues[rowNum].dailyRate || checkedSnapshot.dailyRate || ''),
+                lateStart: String(window.dayOverrideValues[rowNum].lateThreshold || checkedSnapshot.lateThreshold || '8:00'),
+                endTime: String(window.dayOverrideValues[rowNum].endThreshold || checkedSnapshot.endThreshold || '17:00')
+            };
+        }
+    });
+
+    return {
+        version: 1,
+        default_values: {
+            perDay: String(defaultSnapshot.dailyRate || ''),
+            lateStart: String(defaultSnapshot.lateThreshold || '8:00'),
+            endTime: String(defaultSnapshot.endThreshold || '17:00')
+        },
+        checked_values: {
+            perDay: String(checkedSnapshot.dailyRate || defaultSnapshot.dailyRate || ''),
+            lateStart: String(checkedSnapshot.lateThreshold || defaultSnapshot.lateThreshold || '8:00'),
+            endTime: String(checkedSnapshot.endThreshold || defaultSnapshot.endThreshold || '17:00')
+        },
+        checked_rows: checkedRows,
+        row_values: rowValues
+    };
 }
 
 function setCheckedDaysModeLabel(enabled) {
@@ -5718,15 +5842,34 @@ function setCheckedDaysModeLabel(enabled) {
 function setCheckedDaysMode(enabled) {
     const switchInput = document.getElementById('checked_days_mode_switch');
     if (!switchInput) return;
+    if (!!switchInput.checked === !!enabled) {
+        setCheckedDaysModeLabel(!!enabled);
+        updateCheckedDaysVisuals();
+        return;
+    }
     switchInput.checked = !!enabled;
     toggleCheckedDaysMode(switchInput);
 }
 
 function setCheckedDaysFieldsVisualState(enabled) {
+    const rateRow = document.querySelector('.tb5-rate-row');
+    if (rateRow) {
+        rateRow.classList.toggle('checked-days-theme', enabled);
+    }
+
     ['daily_rate', 'late_threshold', 'end_threshold'].forEach(id => {
         const el = document.getElementById(id);
         if (el) {
-            el.classList.toggle('checked-days-editing', enabled);
+            if (id === 'daily_rate') {
+                // Keep PER/DAY input itself flat; only colorize its wrapper.
+                el.classList.remove('checked-days-editing');
+                const wrapper = el.closest('.rate-input-wrapper');
+                if (wrapper) {
+                    wrapper.classList.toggle('checked-days-editing-wrapper', enabled);
+                }
+            } else {
+                el.classList.toggle('checked-days-editing', enabled);
+            }
         }
     });
 }
@@ -5755,7 +5898,6 @@ function loadCheckedDaysValuesIntoHeader(values) {
 function applyCheckedDaysHeaderValuesToRows() {
     const rows = getCheckedDayOverrideRows();
     const values = getCurrentCheckedDaysValues();
-    window.checkedDaysOverrideSnapshot = values;
 
     rows.forEach(rowNum => {
         const existing = window.dayOverrideValues[rowNum] || {};
@@ -5773,32 +5915,46 @@ function applyCheckedDaysHeaderValuesToRows() {
 }
 
 function toggleCheckedDaysMode(toggleEl) {
+    const wasEnabled = !!window.checkedDaysEditMode;
     const isEnabled = !!(toggleEl && toggleEl.checked);
-    window.checkedDaysEditMode = isEnabled;
 
-    if (isEnabled) {
-        deactivateDayOverrideContext();
-        if (!window.checkedDaysDefaultSnapshot) {
-            window.checkedDaysDefaultSnapshot = getCurrentCheckedDaysValues();
-        }
-        if (!window.checkedDaysOverrideSnapshot) {
-            window.checkedDaysOverrideSnapshot = getCurrentCheckedDaysValues();
-        }
-        loadCheckedDaysValuesIntoHeader(window.checkedDaysOverrideSnapshot);
-        setCheckedDaysModeLabel(true);
-        applyCheckedDaysHeaderValuesToRows();
+    // Ignore redundant toggles to avoid overwriting saved snapshots.
+    if (wasEnabled === isEnabled) {
+        setCheckedDaysModeLabel(isEnabled);
         updateCheckedDaysVisuals();
         return;
     }
 
-    window.checkedDaysOverrideSnapshot = getCurrentCheckedDaysValues();
+    // Persist values for the mode we are leaving.
+    syncCurrentModeSnapshotFromHeader();
+
+    // First-time initialization only; do not overwrite once set.
     if (!window.checkedDaysDefaultSnapshot) {
         window.checkedDaysDefaultSnapshot = getCurrentCheckedDaysValues();
     }
+    if (!window.checkedDaysOverrideSnapshot) {
+        window.checkedDaysOverrideSnapshot = getCurrentCheckedDaysValues();
+    }
+
+    window.isSwitchingCheckedMode = true;
+
+    window.checkedDaysEditMode = isEnabled;
+
+    if (isEnabled) {
+        deactivateDayOverrideContext();
+        loadCheckedDaysValuesIntoHeader(window.checkedDaysOverrideSnapshot);
+        setCheckedDaysModeLabel(true);
+        // Recompute header computed rates (PER/HOUR, PER/MIN) and propagate checked values to checked rows.
+        updateRatesFromDaily();
+        window.isSwitchingCheckedMode = false;
+        return;
+    }
+
     loadCheckedDaysValuesIntoHeader(window.checkedDaysDefaultSnapshot);
     setCheckedDaysModeLabel(false);
     updateCheckedDaysVisuals();
     updateRatesFromDaily();
+    window.isSwitchingCheckedMode = false;
 }
 
 function getCurrentHeaderRateValues() {
@@ -5877,7 +6033,17 @@ function markActiveDayOverrideRow(rowNum) {
 
 function seedDayOverrideValues(rowNum) {
     if (!window.dayOverrideValues[rowNum]) {
-        window.dayOverrideValues[rowNum] = getCurrentDayOverrideEditableValues();
+        const baseValues = getCurrentDayOverrideEditableValues();
+        const checkedValues = window.checkedDaysOverrideSnapshot;
+
+        // DAY OVR rows should default to checked snapshot values when available.
+        if (checkedValues) {
+            baseValues.dailyRate = checkedValues.dailyRate || baseValues.dailyRate;
+            baseValues.lateThreshold = checkedValues.lateThreshold || baseValues.lateThreshold;
+            baseValues.endThreshold = checkedValues.endThreshold || baseValues.endThreshold;
+        }
+
+        window.dayOverrideValues[rowNum] = baseValues;
     }
 }
 
@@ -5885,9 +6051,18 @@ function activateDayOverrideContext(rowNum) {
     if (String(window.activeDayOverrideRow) === String(rowNum)) {
         return;
     }
-    if (!window.globalRateFieldSnapshot) {
+
+    // If switching from one override row to another, persist the previous row first.
+    if (window.activeDayOverrideRow && String(window.activeDayOverrideRow) !== String(rowNum)) {
+        syncHeaderFieldsToDayOverride(window.activeDayOverrideRow);
+    }
+
+    // Always capture the latest default header before entering override context.
+    // Using a stale snapshot causes default/checked value contamination.
+    if (!window.activeDayOverrideRow) {
         captureGlobalRateFieldSnapshot();
     }
+
     seedDayOverrideValues(rowNum);
     window.activeDayOverrideRow = rowNum;
     markActiveDayOverrideRow(rowNum);
@@ -5899,12 +6074,16 @@ function deactivateDayOverrideContext() {
     if (!window.activeDayOverrideRow) {
         return;
     }
+    // Persist current header values into the active override row before leaving it.
+    syncHeaderFieldsToDayOverride(window.activeDayOverrideRow);
     window.activeDayOverrideRow = null;
     markActiveDayOverrideRow(null);
     if (!window.globalRateFieldSnapshot) {
         captureGlobalRateFieldSnapshot();
     }
     restoreGlobalRateFieldSnapshot();
+    // Force fresh capture next time we enter override context.
+    window.globalRateFieldSnapshot = null;
     updateRatesFromDaily();
 }
 
@@ -5956,7 +6135,11 @@ function handleDayOverrideToggle() {
     }
 
     if (isEnabled) {
-        activateDayOverrideContext(rowNum);
+        // When enabling DAY OVR in default view, initialize from checked snapshot
+        // but do not overwrite existing manually edited row values.
+        if (!window.dayOverrideValues[rowNum]) {
+            seedDayOverrideValues(rowNum);
+        }
     } else if (String(window.activeDayOverrideRow) === String(rowNum)) {
         deactivateDayOverrideContext();
     }
@@ -5964,6 +6147,7 @@ function handleDayOverrideToggle() {
     applyDayOverrideState(rowNum, isEnabled);
     updateCheckedDaysVisuals();
     calculateRowDTR(rowNum);
+    calculateTotals();
 }
 
 function handleDayOverrideInputChange() {
@@ -6025,7 +6209,7 @@ function addDTRRow(rowNum = null, dateStr = null, skipUpdateCalls = false) {
         <td><input type="number" name="undertime_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Undertime deduction"></td>
         <td><input type="number" name="halfday_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Halfday deduction (auto-calculated when work hours < 4)"></td>
         <td><input type="number" name="ot_pay_${rowNum}" data-row="${rowNum}" class="dtr-pay pay-highlight" readonly value="0.00" step="0.01" title="OT payment"></td>
-        <td><input type="number" name="net_deduct_${rowNum}" data-row="${rowNum}" class="dtr-calc net-deduct-highlight" readonly value="0.00" step="0.01" title="Total deductions minus OT pay"></td>
+        <td><input type="number" name="net_deduct_${rowNum}" data-row="${rowNum}" class="dtr-pay pay-highlight" readonly value="0.00" step="0.01" title="OT payment"></td>
         <td><input type="number" name="late_min_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Late in minutes calculation"></td>
         <td><input type="number" name="undertime_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Undertime calculation"></td>
         <td><input type="number" name="ot_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="OT calculation"></td>
@@ -6161,7 +6345,8 @@ function calculateHours(timeIn, timeOut, scheduledStartOverride = null) {
     // Get actual arrival time in minutes
     const actualArrivalMins = parseTimeToMinutes(timeIn);
     
-    // If arrived within grace period, calculate work hours from scheduled start time
+    // If arrived on/before grace end, count from scheduled start.
+    // This intentionally caps early arrivals to TIME START for computations.
     let effectiveStartTime = timeIn;
     if (actualArrivalMins !== null && actualArrivalMins <= graceEndMins) {
         // Use scheduled start time instead of actual arrival
@@ -6363,8 +6548,68 @@ function calculateRowDTR(rowNum) {
     let effectiveLateThreshold = document.getElementById('late_threshold')?.value || '8:00';
     let effectiveEndThreshold = document.getElementById('end_threshold')?.value || '17:00';
 
+    // In normal mode, unchecked rows should follow saved DEFAULT values,
+    // not whatever header is currently showing for an override row.
+    if (!window.checkedDaysEditMode && !isDayOverride) {
+        const defaultValues = window.checkedDaysDefaultSnapshot || {};
+        const defaultDaily = parseFormattedNumber(defaultValues.dailyRate || '0');
+        if (defaultDaily > 0) {
+            effectiveDailyRate = defaultDaily;
+        }
+        if (parseTimeToMinutes(defaultValues.lateThreshold || '') !== null) {
+            effectiveLateThreshold = defaultValues.lateThreshold;
+        }
+        if (parseTimeToMinutes(defaultValues.endThreshold || '') !== null) {
+            effectiveEndThreshold = defaultValues.endThreshold;
+        }
+    }
+
+    // In checked-days edit mode, unchecked rows must keep DEFAULT values,
+    // while checked rows use CHECKED override values.
+    if (window.checkedDaysEditMode) {
+        const defaultValues = window.checkedDaysDefaultSnapshot || {};
+        const checkedValues = window.checkedDaysOverrideSnapshot || {};
+
+        if (!isDayOverride) {
+            const defaultDaily = parseFormattedNumber(defaultValues.dailyRate || '0');
+            if (defaultDaily > 0) {
+                effectiveDailyRate = defaultDaily;  
+            }
+            if (parseTimeToMinutes(defaultValues.lateThreshold || '') !== null) {
+                effectiveLateThreshold = defaultValues.lateThreshold;
+            }
+            if (parseTimeToMinutes(defaultValues.endThreshold || '') !== null) {
+                effectiveEndThreshold = defaultValues.endThreshold;
+            }
+        } else {
+            const checkedDaily = parseFormattedNumber(checkedValues.dailyRate || '0');
+            if (checkedDaily > 0) {
+                effectiveDailyRate = checkedDaily;
+            }
+            if (parseTimeToMinutes(checkedValues.lateThreshold || '') !== null) {
+                effectiveLateThreshold = checkedValues.lateThreshold;
+            }
+            if (parseTimeToMinutes(checkedValues.endThreshold || '') !== null) {
+                effectiveEndThreshold = checkedValues.endThreshold;
+            }
+        }
+    }
+
     if (isDayOverride) {
-        const rowOverride = window.dayOverrideValues[rowNum] || {};
+        let rowOverride = window.dayOverrideValues[rowNum] || {};
+
+        // In Checked mode, computation should follow the currently visible Checked header values.
+        // This prevents stale per-row snapshots (e.g. old 8:00/17:00) from overriding 7:30/16:30.
+        if (window.checkedDaysEditMode) {
+            rowOverride = {
+                ...rowOverride,
+                dailyRate: document.getElementById('daily_rate')?.value || rowOverride.dailyRate || '',
+                lateThreshold: document.getElementById('late_threshold')?.value || rowOverride.lateThreshold || '8:00',
+                endThreshold: document.getElementById('end_threshold')?.value || rowOverride.endThreshold || '17:00'
+            };
+            window.dayOverrideValues[rowNum] = rowOverride;
+        }
+
         const overrideBasic = parseFormattedNumber(rowOverride.basicSalary || '0');
         const overrideDaily = parseFormattedNumber(rowOverride.dailyRate || '0');
         const overrideLate = rowOverride.lateThreshold || '';
@@ -6402,8 +6647,10 @@ function calculateRowDTR(rowNum) {
         // If within grace period, counts from scheduled start time
         workHours = calculateHours(amIn, pmOut, effectiveLateThreshold);
         
-        // Calculate OT hours (TB5: otOut - closing_time)
-        const otMinutes = calculateOTMinutes(otOut, effectiveEndThreshold);
+        // Calculate OT hours (TB5: out time beyond closing). If OT OUT is blank,
+        // fallback to PM OUT so 19:00 PM OUT still records OT.
+        const otReference = (otOut && otOut.trim() !== '') ? otOut : pmOut;
+        const otMinutes = calculateOTMinutes(otReference, effectiveEndThreshold);
         otHours = otMinutes / 60;
     }
     
@@ -6432,6 +6679,7 @@ function calculateRowDTR(rowNum) {
     // Calculate deductions and payments (TB5 format)
     const lateDeduct = lateMinutes * perMin;  // TB5: LATE/MIN DEDUCT = late mins * per min rate
     const undertimeDeduct = undertimeHours * hourlyRate;
+    const totalDeductions = lateDeduct + undertimeDeduct + halfdayDeduct;
     const otPay = otHours * otRate;
     
     // Update row fields
@@ -6454,9 +6702,8 @@ function calculateRowDTR(rowNum) {
     
     document.querySelector(`input[name="ot_pay_${rowNum}"]`).value = otPay.toFixed(2);
     
-    // Calculate net deductions (Total Deductions - OT Pay)
-    const totalDeductions = lateDeduct + undertimeDeduct + halfdayDeduct;
-    const netDeduct = totalDeductions - otPay;
+    // Mirror OT pay in this column (requested behavior)
+    const netDeduct = otPay;
     const netDeductInput = document.querySelector(`input[name="net_deduct_${rowNum}"]`);
     if (netDeductInput) netDeductInput.value = netDeduct.toFixed(2);
     
@@ -6732,8 +6979,8 @@ function calculateTotals() {
         }
     });
     
-    // Calculate total net deductions (include halfday deduction)
-    const totalNetDeduct = (totalLateDeduct + totalUndertimeDeduct + totalHalfdayDeduct) - totalOTPay;
+    // This column now mirrors OT Pay total.
+    const totalNetDeduct = totalOTPay;
     
     // Update totals row - values already in correct units (hours/minutes)
     const workHrsEl = document.getElementById('total_work_hours');
@@ -6930,9 +7177,8 @@ function attachDTRListeners() {
 // Handler functions to avoid duplicate listeners
 function handleDTRInputChange() {
     const rowNum = this.getAttribute('data-row');
-    if (rowNum) {
-        setHeaderContextForRow(rowNum);
-    }
+    // Do not auto-switch header context while typing in rows.
+    // Header values should change only when user explicitly manipulates them.
     calculateRowDTR(rowNum);
 }
 
@@ -8964,6 +9210,7 @@ function saveDTRToDatabase() {
     formData.append('end_threshold', document.getElementById('end_threshold')?.value || '17:00');
     formData.append('classification', currentEmployeeClassification || '');
     formData.append('dtr_records', JSON.stringify(dtrRecords));
+    formData.append('day_override_meta', JSON.stringify(buildDayOverrideMetaForSave()));
     formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '');
 
     fetch('save_dtr.php', {
@@ -9199,6 +9446,7 @@ function saveMainDTRToDatabase() {
     formData.append('end_threshold', document.getElementById('end_threshold')?.value || '17:00');
     formData.append('classification', (activeTabId && employeeTabs[activeTabId]) ? (employeeTabs[activeTabId].classification || '') : (currentEmployeeClassification || ''));
     formData.append('dtr_records',  JSON.stringify(dtrRecords));
+    formData.append('day_override_meta', JSON.stringify(buildDayOverrideMetaForSave()));
     formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '');
 
     fetch('save_dtr.php', {
@@ -9233,20 +9481,18 @@ function saveMainDTRToDatabase() {
                     // Restore the save bar
                     if (bar) {
                         bar.innerHTML = `
-                            <div class="dtr-save-bar-left">
-                                <span class="save-info-text"><i class="fas fa-info-circle"></i> Review all DTR entries above, then save to link this payroll record to the selected employee.</span>
-                            </div>
                             <div class="dtr-save-bar-right">
-                                <button type="button" class="btn-recalculate" onclick="recalculateAllDTR()" title="Recalculate all rows" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; margin-right: 8px;">
-                                    <i class="fas fa-calculator"></i> Recalculate All
+                                <button type="button" class="btn-recalculate" onclick="recalculateAllDTR()" title="Recalculate all rows">
+                                    <i class="fas fa-calculator"></i> Recalculate
                                 </button>
                                 <button type="button" id="btn_save_main_dtr" class="btn-save-payroll" onclick="saveMainDTRToDatabase()">
                                     <i class="fas fa-save"></i> Save to Payroll List
                                 </button>
-                                <button type="button" id="btn_save_all_dtr" class="btn-save-payroll btn-save-all" onclick="saveAllDTRToDatabase()" style="margin-left: 8px; background: linear-gradient(135deg, #38a169, #2f855a);">
+                                <button type="button" id="btn_save_all_dtr" class="btn-save-payroll btn-save-all" onclick="saveAllDTRToDatabase()" style="display: none; margin-left: 8px; background: linear-gradient(135deg, #38a169, #2f855a);">
                                     <i class="fas fa-save"></i> Save All (<span id="save_all_count">${unsavedTabs.length}</span>) to Payroll
                                 </button>
                             </div>`;
+                        updateSaveAllButton();
                     }
                     // Switch to first unsaved tab
                     const nextTab = unsavedTabs[0];
@@ -10791,7 +11037,7 @@ function createDTRRowFromData(rowNum, data) {
         <td><input type="number" name="undertime_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Undertime deduction"></td>
         <td><input type="number" name="halfday_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Halfday deduction (auto-calculated when work hours < 4)"></td>
         <td><input type="number" name="ot_pay_${rowNum}" data-row="${rowNum}" class="dtr-pay pay-highlight" readonly value="0.00" step="0.01" title="OT payment"></td>
-        <td><input type="number" name="net_deduct_${rowNum}" data-row="${rowNum}" class="dtr-calc net-deduct-highlight" readonly value="0.00" step="0.01" title="Total deductions minus OT pay"></td>
+        <td><input type="number" name="net_deduct_${rowNum}" data-row="${rowNum}" class="dtr-pay pay-highlight" readonly value="0.00" step="0.01" title="OT payment"></td>
         <td><input type="number" name="late_min_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Late in minutes calculation"></td>
         <td><input type="number" name="undertime_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Undertime calculation"></td>
         <td><input type="number" name="ot_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="OT calculation"></td>
@@ -11212,9 +11458,10 @@ function updateRatesFromDaily() {
         return;
     }
 
-    window.checkedDaysDefaultSnapshot = getCurrentCheckedDaysValues();
-
     const activeRow = getActiveDayOverrideRow();
+    if (!activeRow && !window.isSwitchingCheckedMode) {
+        window.checkedDaysDefaultSnapshot = getCurrentCheckedDaysValues();
+    }
     if (activeRow) {
         syncHeaderFieldsToDayOverride(activeRow);
         calculateRowDTR(activeRow);
@@ -11258,9 +11505,10 @@ function recalculateAllRows() {
         return;
     }
 
-    window.checkedDaysDefaultSnapshot = getCurrentCheckedDaysValues();
-
     const activeRow = getActiveDayOverrideRow();
+    if (!activeRow) {
+        window.checkedDaysDefaultSnapshot = getCurrentCheckedDaysValues();
+    }
     if (activeRow) {
         syncHeaderFieldsToDayOverride(activeRow);
         calculateRowDTR(activeRow);
@@ -11315,6 +11563,8 @@ function updateOTRate() {
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM Content Loaded - Initializing...');
+
+    document.body.classList.toggle('manual-payroll-mode', currentPayrollMode === 'manual');
 
     setCheckedDaysModeLabel(false);
     

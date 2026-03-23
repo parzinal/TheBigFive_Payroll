@@ -82,12 +82,14 @@ $periodId = isset($data['period_id']) ? (int)$data['period_id'] : 0;
 // Example: "13,000.00" should become 13000.00, not 13.00
 $basicSalary = isset($data['basic_salary']) ? (float)str_replace(',', '', $data['basic_salary']) : null;
 $perDay = isset($data['per_day']) ? (float)str_replace(',', '', $data['per_day']) : null;
+$otRate = isset($data['ot_rate']) ? (float)str_replace(',', '', $data['ot_rate']) : null;
 $lateStart = isset($data['late_start']) ? trim($data['late_start']) : null;
 $endTime = isset($data['end_time']) ? trim($data['end_time']) : null;
 
 // Training payment fields
 $trainingAmount = isset($data['training_amount']) ? (float)str_replace(',', '', $data['training_amount']) : null;
 $trainingRemarks = isset($data['training_remarks']) ? trim($data['training_remarks']) : null;
+$dayOverrideMeta = (isset($data['day_override_meta']) && is_array($data['day_override_meta'])) ? $data['day_override_meta'] : null;
 
 if ($employeeId <= 0 || empty($records)) {
     ob_end_clean();
@@ -117,18 +119,64 @@ try {
     }*/
     
     // Update payroll computation settings if period_id is provided
-    if ($periodId > 0 && ($lateStart || $endTime || $trainingAmount !== null || $trainingRemarks !== null)) {
-        // Update payroll computation (late_start, end_time, training cost, training_remarks)
-        $updateCompStmt = $pdo->prepare("
-            UPDATE payroll_computations 
-            SET late_start = COALESCE(?, late_start, '07:35'),
-                end_time = COALESCE(?, end_time, '17:00'),
-                trainings_cost = COALESCE(?, trainings_cost, 0),
-                training_amount = COALESCE(?, training_amount, 0),
-                training_remarks = COALESCE(?, training_remarks, '')
-            WHERE payroll_period_id = ? AND employee_id = ?
-        ");
-        $updateCompStmt->execute([$lateStart, $endTime, $trainingAmount, $trainingAmount, $trainingRemarks, $periodId, $employeeId]);
+        if ($periodId > 0) {
+            $stmtComp = $pdo->prepare("
+                SELECT id, other_deductions_notes
+                FROM payroll_computations
+                WHERE payroll_period_id = ? AND employee_id = ?
+                LIMIT 1
+            ");
+            $stmtComp->execute([$periodId, $employeeId]);
+            $existingComp = $stmtComp->fetch(PDO::FETCH_ASSOC);
+
+            if ($existingComp) {
+                $notes = [];
+                if (!empty($existingComp['other_deductions_notes'])) {
+                    $decodedNotes = json_decode($existingComp['other_deductions_notes'], true);
+                    if (is_array($decodedNotes)) {
+                        $notes = $decodedNotes;
+                    }
+                }
+
+                if (is_array($dayOverrideMeta)) {
+                    $notes['day_override'] = $dayOverrideMeta;
+                }
+                $notes['ot_rate'] = ($otRate !== null && $otRate > 0) ? $otRate : null;
+
+                $otherDeductionsNotes = json_encode($notes);
+
+                $perHour = ($perDay !== null && $perDay > 0) ? ($perDay / 8) : null;
+                $perMinute = ($perHour !== null) ? ($perHour / 60) : null;
+
+                $updateCompStmt = $pdo->prepare("
+                    UPDATE payroll_computations
+                    SET basic_monthly_salary = COALESCE(?, basic_monthly_salary),
+                        per_day_rate = COALESCE(?, per_day_rate),
+                        per_hour_rate = COALESCE(?, per_hour_rate),
+                        per_minute_rate = COALESCE(?, per_minute_rate),
+                        late_start = COALESCE(?, late_start, '07:35'),
+                        end_time = COALESCE(?, end_time, '17:00'),
+                        trainings_cost = COALESCE(?, trainings_cost, 0),
+                        training_amount = COALESCE(?, training_amount, 0),
+                        training_remarks = COALESCE(?, training_remarks, ''),
+                        other_deductions_notes = COALESCE(?, other_deductions_notes),
+                        updated_at = NOW()
+                    WHERE id = ?
+                ");
+                $updateCompStmt->execute([
+                    $basicSalary,
+                    $perDay,
+                    $perHour,
+                    $perMinute,
+                    $lateStart,
+                    $endTime,
+                    $trainingAmount,
+                    $trainingAmount,
+                    $trainingRemarks,
+                    $otherDeductionsNotes,
+                    $existingComp['id']
+                ]);
+            }
     }
     
     $updateStmt = $pdo->prepare("

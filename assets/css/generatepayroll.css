@@ -1735,9 +1735,15 @@
 }
 
 .checked-days-editing {
-    border-color: #0f9d7a !important;
-    background: linear-gradient(to bottom, #f0fffb 0%, #def7ef 100%) !important;
-    box-shadow: 0 0 0 3px rgba(15, 157, 122, 0.15) !important;
+    border-color: #3b82f6 !important;
+    background: linear-gradient(to bottom, #eff6ff 0%, #dbeafe 100%) !important;
+    box-shadow: 0 0 0 3px rgba(59, 130, 246, 0.2) !important;
+}
+
+.checked-days-editing-wrapper {
+    background: linear-gradient(180deg, #cfe3ff 0%, #a8cbff 100%) !important;
+    border-color: #3b82f6 !important;
+    box-shadow: 0 0 0 2px rgba(59, 130, 246, 0.18) !important;
 }
 
 /* DTR Table Cell Highlighting */

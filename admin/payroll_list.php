@@ -855,6 +855,70 @@ $employees = $stmt->fetchAll(PDO::FETCH_ASSOC);
     box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.2);
 }
 
+/* Day override switch */
+.tb5-switch-item {
+    min-width: 182px;
+}
+.tb5-switch-item .segment-switch-wrap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+.tb5-switch-item .segment-switch-track {
+    position: relative;
+    width: 164px;
+    height: 36px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+    overflow: hidden;
+    border: 1px solid #c8cdd4;
+    border-radius: 10px;
+    background: linear-gradient(180deg, #eef2f7 0%, #d8dee7 100%);
+}
+.tb5-switch-item .segment-switch-track::before {
+    content: '';
+    position: absolute;
+    top: 1px;
+    left: 0;
+    width: 50%;
+    height: calc(100% - 2px);
+    z-index: 1;
+    border-radius: 9px;
+    background: linear-gradient(180deg, #b7f7c6 0%, #74d98f 100%);
+    transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.25s ease;
+}
+.tb5-switch-item .segment-switch-track.checked-mode::before {
+    transform: translateX(100%);
+    background: linear-gradient(180deg, #bcdcff 0%, #7fb5ff 100%);
+}
+.tb5-switch-item .segment-option,
+.tb5-switch-item .segment-btn {
+    z-index: 2;
+    height: 100%;
+    border: 0;
+    margin: 0;
+    padding: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    background: transparent;
+    color: #2f3a47;
+    font-size: 12px;
+    font-weight: 700;
+    line-height: 1;
+}
+.tb5-switch-item .segment-btn:disabled {
+    cursor: not-allowed;
+    opacity: 0.6;
+}
+
+.dtr-table .th-day-override {
+    min-width: 58px;
+}
+
 /* DTR Table Wrapper */
 .dtr-table-wrapper {
     overflow-x: auto;
@@ -1702,6 +1766,7 @@ input[readonly].dtr-remarks-input { background: #edf2f7 !important; cursor: defa
     text-align: center;
 }
 .summary-row-full {
+    grid-column: 1 / -1;
     display: flex;
     justify-content: space-between;
     align-items: center;
@@ -1755,6 +1820,241 @@ let currentDTRRecords = [];
 let currentEmpInfo    = null;
 let currentComp       = null;
 let editModeEnabled   = false;
+let payrollListCheckedDaysEditMode = false;
+let payrollListCheckedDaysDefaultSnapshot = null;
+let payrollListCheckedDaysOverrideSnapshot = null;
+let payrollListDayOverrideValues = {};
+let payrollListLoadedDayOverrideMeta = null;
+
+function getCurrentPayrollEditorValues() {
+    return {
+        perDay: document.getElementById('edit_per_day')?.value || '',
+        lateStart: document.getElementById('edit_late_start')?.value || '8:00',
+        endTime: document.getElementById('edit_end_time')?.value || '17:00'
+    };
+}
+
+function normalizePayrollOverrideValues(values, fallback = {}) {
+    const fallbackPerDay = fallback.perDay !== undefined ? String(fallback.perDay) : '';
+    const fallbackLateStart = fallback.lateStart || '8:00';
+    const fallbackEndTime = fallback.endTime || '17:00';
+    return {
+        perDay: values && values.perDay !== undefined && values.perDay !== null ? String(values.perDay) : fallbackPerDay,
+        lateStart: values && values.lateStart ? String(values.lateStart) : fallbackLateStart,
+        endTime: values && values.endTime ? String(values.endTime) : fallbackEndTime
+    };
+}
+
+function parsePayrollDayOverrideMeta(comp, defaultValues) {
+    const fallback = normalizePayrollOverrideValues(defaultValues);
+    let notes = null;
+
+    if (comp && comp.other_deductions_notes) {
+        try {
+            notes = JSON.parse(comp.other_deductions_notes);
+        } catch (e) {
+            console.warn('Failed to parse other_deductions_notes for day_override metadata');
+        }
+    }
+
+    const rawMeta = notes && notes.day_override && typeof notes.day_override === 'object' ? notes.day_override : null;
+    if (!rawMeta) {
+        return {
+            default_values: fallback,
+            checked_values: { ...fallback },
+            checked_rows: [],
+            row_values: {}
+        };
+    }
+
+    const defaultVals = normalizePayrollOverrideValues(rawMeta.default_values, fallback);
+    const checkedVals = normalizePayrollOverrideValues(rawMeta.checked_values, defaultVals);
+
+    return {
+        default_values: defaultVals,
+        checked_values: checkedVals,
+        checked_rows: Array.isArray(rawMeta.checked_rows) ? rawMeta.checked_rows.map(v => String(v)) : [],
+        row_values: (rawMeta.row_values && typeof rawMeta.row_values === 'object') ? rawMeta.row_values : {}
+    };
+}
+
+function buildPayrollListDayOverrideMetaForSave() {
+    const table = document.getElementById('dtrEditTable');
+    if (!table) return null;
+
+    const defaultValues = normalizePayrollOverrideValues(payrollListCheckedDaysDefaultSnapshot || getCurrentPayrollEditorValues());
+    const checkedValues = normalizePayrollOverrideValues(payrollListCheckedDaysOverrideSnapshot || defaultValues, defaultValues);
+    const checkedRows = [];
+    const rowValues = {};
+
+    table.querySelectorAll('tbody tr.dtr-data-row').forEach((row) => {
+        const idx = row.dataset.idx;
+        const rowDate = row.dataset.dtrDate || '';
+        const toggle = row.querySelector('.dtr-day-override-toggle');
+        if (!idx || !rowDate || !toggle || toggle.disabled || !toggle.checked) return;
+
+        checkedRows.push(rowDate);
+        if (payrollListDayOverrideValues[idx]) {
+            rowValues[rowDate] = normalizePayrollOverrideValues(payrollListDayOverrideValues[idx], checkedValues);
+        }
+    });
+
+    return {
+        version: 1,
+        default_values: defaultValues,
+        checked_values: checkedValues,
+        checked_rows: checkedRows,
+        row_values: rowValues
+    };
+}
+
+function getPayrollCheckedDayRows() {
+    const rows = [];
+    document.querySelectorAll('#dtrEditTable .dtr-day-override-toggle').forEach(toggle => {
+        if (toggle.checked && !toggle.disabled) {
+            rows.push(toggle.getAttribute('data-idx'));
+        }
+    });
+    return rows;
+}
+
+function setPayrollCheckedModeLabel(enabled) {
+    const defaultBtn = document.getElementById('pl_checked_days_default_btn');
+    const checkedBtn = document.getElementById('pl_checked_days_checked_btn');
+    const track = document.querySelector('#employee_dtr_content .segment-switch-track');
+    if (defaultBtn) defaultBtn.classList.toggle('active', !enabled);
+    if (checkedBtn) checkedBtn.classList.toggle('active', enabled);
+    if (track) track.classList.toggle('checked-mode', enabled);
+}
+
+function setPayrollCheckedDaysMode(enabled) {
+    const isEnabled = !!enabled;
+    if (payrollListCheckedDaysEditMode === isEnabled) {
+        const targetSame = isEnabled
+            ? (payrollListCheckedDaysOverrideSnapshot || getCurrentPayrollEditorValues())
+            : (payrollListCheckedDaysDefaultSnapshot || getCurrentPayrollEditorValues());
+        loadPayrollCheckedValuesIntoHeader(targetSame);
+        setPayrollCheckedModeLabel(isEnabled);
+        updateRatesFromDaily();
+        return;
+    }
+
+    // Persist values only while editing; in view mode this switch is preview-only.
+    if (editModeEnabled) {
+        const currentValues = getCurrentPayrollEditorValues();
+        if (payrollListCheckedDaysEditMode) {
+            payrollListCheckedDaysOverrideSnapshot = currentValues;
+        } else {
+            payrollListCheckedDaysDefaultSnapshot = currentValues;
+        }
+    }
+
+    payrollListCheckedDaysEditMode = isEnabled;
+
+    if (!payrollListCheckedDaysDefaultSnapshot) {
+        payrollListCheckedDaysDefaultSnapshot = getCurrentPayrollEditorValues();
+    }
+    if (!payrollListCheckedDaysOverrideSnapshot) {
+        payrollListCheckedDaysOverrideSnapshot = getCurrentPayrollEditorValues();
+    }
+
+    const target = isEnabled ? payrollListCheckedDaysOverrideSnapshot : payrollListCheckedDaysDefaultSnapshot;
+    loadPayrollCheckedValuesIntoHeader(target);
+    setPayrollCheckedModeLabel(isEnabled);
+    updateRatesFromDaily();
+}
+
+function loadPayrollCheckedValuesIntoHeader(values) {
+    const perDay = document.getElementById('edit_per_day');
+    const lateStart = document.getElementById('edit_late_start');
+    const endTime = document.getElementById('edit_end_time');
+    if (perDay) perDay.value = values?.perDay || '';
+    if (lateStart) lateStart.value = values?.lateStart || '8:00';
+    if (endTime) endTime.value = values?.endTime || '17:00';
+}
+
+function applyPayrollCheckedHeaderValuesToRows() {
+    const values = getCurrentPayrollEditorValues();
+    payrollListCheckedDaysOverrideSnapshot = values;
+
+    getPayrollCheckedDayRows().forEach(idx => {
+        const existing = payrollListDayOverrideValues[idx] || {};
+        payrollListDayOverrideValues[idx] = {
+            ...existing,
+            perDay: values.perDay,
+            lateStart: values.lateStart,
+            endTime: values.endTime
+        };
+        const row = document.querySelector(`#dtrEditTable tr.dtr-data-row[data-idx="${idx}"]`);
+        if (row) recalculateRow(row);
+    });
+    recalculateTotals();
+}
+
+function handleDayOverrideToggleEdit(toggleEl) {
+    const idx = toggleEl?.getAttribute('data-idx');
+    if (!idx) return;
+
+    if (toggleEl.checked) {
+        if (!payrollListDayOverrideValues[idx]) {
+            const seed = payrollListCheckedDaysOverrideSnapshot || getCurrentPayrollEditorValues();
+            payrollListDayOverrideValues[idx] = {
+                perDay: seed.perDay || '',
+                lateStart: seed.lateStart || '8:00',
+                endTime: seed.endTime || '17:00'
+            };
+        }
+    }
+
+    const row = toggleEl.closest('tr');
+    if (row) recalculateRow(row);
+    recalculateTotals();
+}
+
+function initializePayrollListOverrideState(records = [], dayOverrideMeta = null) {
+    payrollListCheckedDaysEditMode = false;
+    payrollListDayOverrideValues = {};
+
+    const baseValues = getCurrentPayrollEditorValues();
+    const meta = dayOverrideMeta || parsePayrollDayOverrideMeta(currentComp, baseValues);
+    payrollListLoadedDayOverrideMeta = meta;
+
+    payrollListCheckedDaysDefaultSnapshot = normalizePayrollOverrideValues(meta.default_values, baseValues);
+    payrollListCheckedDaysOverrideSnapshot = normalizePayrollOverrideValues(meta.checked_values, payrollListCheckedDaysDefaultSnapshot);
+
+    loadPayrollCheckedValuesIntoHeader(payrollListCheckedDaysDefaultSnapshot);
+    setPayrollCheckedModeLabel(false);
+
+    const checkedRowsSet = new Set((meta.checked_rows || []).map(v => String(v)));
+    const rowValuesByDate = (meta.row_values && typeof meta.row_values === 'object') ? meta.row_values : {};
+    const rows = document.querySelectorAll('#dtrEditTable tbody tr.dtr-data-row');
+
+    rows.forEach((row) => {
+        const idx = row.dataset.idx;
+        const rowDate = String(row.dataset.dtrDate || '');
+        const toggle = row.querySelector('.dtr-day-override-toggle');
+        const isAbsent = row.querySelector(`input[name="absent_${idx}"]`)?.checked || false;
+        const isTraining = row.querySelector(`input[name="training_${idx}"]`)?.checked || false;
+        const rowBlocked = isAbsent || isTraining;
+
+        if (toggle) {
+            const shouldCheck = !rowBlocked && checkedRowsSet.has(rowDate);
+            toggle.checked = shouldCheck;
+            if (!editModeEnabled) {
+                toggle.disabled = true;
+            } else {
+                toggle.disabled = rowBlocked;
+            }
+        }
+
+        if (idx && rowDate && rowValuesByDate[rowDate]) {
+            payrollListDayOverrideValues[idx] = normalizePayrollOverrideValues(
+                rowValuesByDate[rowDate],
+                payrollListCheckedDaysOverrideSnapshot
+            );
+        }
+    });
+}
 
 /* ====== Custom Modal Functions ====== */
 function showCustomConfirm(message, title = 'Confirm Action', onConfirm = null, onCancel = null) {
@@ -1966,6 +2266,8 @@ function loadEmployeeDTRByMonth() {
             if (editBtn) editBtn.style.display = 'inline-flex';
             if (payslipBtn) payslipBtn.style.display = 'inline-flex';
             content.innerHTML = buildDTRView(data.records, data.employee_info, data.payroll_computation);
+            const initialMeta = parsePayrollDayOverrideMeta(data.payroll_computation, getCurrentPayrollEditorValues());
+            initializePayrollListOverrideState(data.records, initialMeta);
             
             // Add event listener to training amount input to update summary
             const trainingAmountInput = document.getElementById('view_training_amount');
@@ -2089,20 +2391,42 @@ function updateRatesFromDaily() {
     // Update per hour, per minute, and OT rate (but NOT basic salary)
     if (perHourSpan) perHourSpan.textContent = formatNum(perHour);
     if (perMinSpan) perMinSpan.textContent = formatNum(perMin, 4);
-    if (otRateInput) otRateInput.value = formatNum(otRate);
+    // Do not auto-fill OT rate from per-day. It should come from saved value or explicit user input.
     
     console.log(`Per/Day updated to: ₱${perDay.toLocaleString('en-US', {minimumFractionDigits: 2})} → Per/Hour: ₱${perHour.toFixed(2)}, Per/Min: ₱${perMin.toFixed(4)}`);
     
     // Only recalculate if in edit mode
-    if (editModeEnabled) {
-        recalculateAllRows();
+    if (!editModeEnabled) return;
+
+    if (payrollListCheckedDaysEditMode) {
+        applyPayrollCheckedHeaderValuesToRows();
+        return;
     }
+
+    payrollListCheckedDaysDefaultSnapshot = getCurrentPayrollEditorValues();
+    recalculateAllRows();
 }
 
 function recalculateAllRows() {
     // Only recalculate if in edit mode
     if (!editModeEnabled) {
         return;
+    }
+
+    if (payrollListCheckedDaysEditMode) {
+        const values = getCurrentPayrollEditorValues();
+        payrollListCheckedDaysOverrideSnapshot = values;
+        getPayrollCheckedDayRows().forEach(idx => {
+            const existing = payrollListDayOverrideValues[idx] || {};
+            payrollListDayOverrideValues[idx] = {
+                ...existing,
+                perDay: values.perDay,
+                lateStart: values.lateStart,
+                endTime: values.endTime
+            };
+        });
+    } else {
+        payrollListCheckedDaysDefaultSnapshot = getCurrentPayrollEditorValues();
     }
     
     const table = document.getElementById('dtrEditTable');
@@ -2114,6 +2438,66 @@ function recalculateAllRows() {
     });
     
     recalculateTotals();
+}
+
+function getEffectiveEditorValuesForRow(row) {
+    const headerValues = getCurrentPayrollEditorValues();
+    const idx = row?.dataset?.idx;
+    const toggle = idx ? row.querySelector('.dtr-day-override-toggle') : null;
+    const isDayOverride = !!(toggle && toggle.checked && !toggle.disabled);
+
+    let effective = {
+        perDay: headerValues.perDay,
+        lateStart: headerValues.lateStart,
+        endTime: headerValues.endTime
+    };
+
+    if (payrollListCheckedDaysEditMode) {
+        if (isDayOverride) {
+            effective = {
+                ...effective,
+                ...(payrollListCheckedDaysOverrideSnapshot || {})
+            };
+        } else {
+            effective = {
+                ...effective,
+                ...(payrollListCheckedDaysDefaultSnapshot || {})
+            };
+        }
+    } else if (!isDayOverride) {
+        effective = {
+            ...effective,
+            ...(payrollListCheckedDaysDefaultSnapshot || {})
+        };
+    }
+
+    // In Checked mode, checked rows should always follow the currently visible Checked header values.
+    // This avoids stale stored row values overriding the active header values.
+    if (isDayOverride && payrollListCheckedDaysEditMode) {
+        effective = {
+            ...effective,
+            ...headerValues,
+            ...(payrollListCheckedDaysOverrideSnapshot || {})
+        };
+    }
+
+    if (isDayOverride && idx && payrollListDayOverrideValues[idx]) {
+        effective = {
+            ...effective,
+            ...payrollListDayOverrideValues[idx]
+        };
+
+        // Re-apply current checked/header values to ensure they win over stale row snapshots.
+        if (payrollListCheckedDaysEditMode) {
+            effective = {
+                ...effective,
+                ...headerValues,
+                ...(payrollListCheckedDaysOverrideSnapshot || {})
+            };
+        }
+    }
+
+    return effective;
 }
 
 /* ====== Time Parsing ====== */
@@ -2134,13 +2518,16 @@ function minutesToTime(mins) {
 }
 
 /* ====== Calculate Work Hours - WITH GRACE PERIOD (Matching Generatepayroll.php) ====== */
-function calculateWorkHours(amIn, pmOut) {
+function calculateWorkHours(amIn, pmOut, scheduledStartOverride = null) {
     if (!amIn || !pmOut) return 0;
     
     // Get scheduled start time (late threshold) - default 8:00 AM (matching Generatepayroll.php)
     const lateStartInput = document.getElementById('edit_late_start');
     let scheduledStartMins = 8 * 60; // Default: 8:00 AM
-    if (lateStartInput && lateStartInput.value) {
+    if (scheduledStartOverride) {
+        const parsed = parseTimeToMinutes(scheduledStartOverride);
+        if (parsed !== null) scheduledStartMins = parsed;
+    } else if (lateStartInput && lateStartInput.value) {
         const parsed = parseTimeToMinutes(lateStartInput.value);
         if (parsed !== null) scheduledStartMins = parsed;
     }
@@ -2152,7 +2539,8 @@ function calculateWorkHours(amIn, pmOut) {
     // Get actual arrival time in minutes
     const actualArrivalMins = parseTimeToMinutes(amIn);
     
-    // If arrived within grace period, calculate work hours from scheduled start time
+    // If arrived on/before grace end, count from scheduled start.
+    // This intentionally caps early arrivals to TIME START for computations.
     let effectiveStartTime = amIn;
     if (actualArrivalMins !== null && actualArrivalMins <= graceEndMins) {
         // Use scheduled start time instead of actual arrival
@@ -2190,7 +2578,7 @@ function calculateWorkHours(amIn, pmOut) {
 }
 
 /* ====== Calculate Late Minutes - WITH GRACE PERIOD (Matching Generatepayroll.php) ====== */
-function calculateLateMins(amIn, lateStart = '8:00') {
+function calculateLateMins(amIn, lateStart = '8:00', scheduledStartOverride = null) {
     if (!amIn) return 0;
     const actualStart = parseTimeToMinutes(amIn);
     if (actualStart === null) return 0;
@@ -2198,7 +2586,10 @@ function calculateLateMins(amIn, lateStart = '8:00') {
     // Read late start time from UI input or use parameter
     const lateStartInput = document.getElementById('edit_late_start');
     let scheduledStartMins = parseTimeToMinutes(lateStart);
-    if (lateStartInput && lateStartInput.value) {
+    if (scheduledStartOverride) {
+        const parsed = parseTimeToMinutes(scheduledStartOverride);
+        if (parsed !== null) scheduledStartMins = parsed;
+    } else if (lateStartInput && lateStartInput.value) {
         const parsed = parseTimeToMinutes(lateStartInput.value);
         if (parsed !== null) scheduledStartMins = parsed;
     }
@@ -2215,7 +2606,7 @@ function calculateLateMins(amIn, lateStart = '8:00') {
 }
 
 /* ====== Calculate Undertime - Consistent with Generatepayroll.php ====== */
-function calculateUndertime(pmOut, endTime = '17:00') {
+function calculateUndertime(pmOut, endTime = '17:00', scheduledEndOverride = null) {
     if (!pmOut) return 0;
     const pmOutMins = parseTimeToMinutes(pmOut);
     if (pmOutMins === null) return 0;
@@ -2223,7 +2614,10 @@ function calculateUndertime(pmOut, endTime = '17:00') {
     // Read end threshold from UI input (default: 17:00)
     const endTimeInput = document.getElementById('edit_end_time');
     let schedEndMins = parseTimeToMinutes(endTime);
-    if (endTimeInput && endTimeInput.value) {
+    if (scheduledEndOverride) {
+        const parsed = parseTimeToMinutes(scheduledEndOverride);
+        if (parsed !== null) schedEndMins = parsed;
+    } else if (endTimeInput && endTimeInput.value) {
         const parsed = parseTimeToMinutes(endTimeInput.value);
         if (parsed !== null) schedEndMins = parsed;
     }
@@ -2261,6 +2655,7 @@ function buildDTRView(records, empInfo, comp) {
     // Use per_day_rate from saved payroll computation if available
     // This preserves the correct per/day rate even when salary includes Sunday work
     let perDay, perHour, perMin, otRate;
+    let hasSavedOtRate = false;
     if (comp && comp.per_day_rate) {
         // Use saved rates from payroll computation
         perDay = parseFloat(comp.per_day_rate);
@@ -2272,12 +2667,18 @@ function buildDTRView(records, empInfo, comp) {
         if (comp.other_deductions_notes) {
             try {
                 const notes = JSON.parse(comp.other_deductions_notes);
-                savedOtRate = notes.ot_rate || null;
+                if (notes.ot_rate !== undefined && notes.ot_rate !== null && notes.ot_rate !== '') {
+                    const parsedOtRate = parseFloat(notes.ot_rate);
+                    if (!isNaN(parsedOtRate) && parsedOtRate > 0) {
+                        savedOtRate = parsedOtRate;
+                        hasSavedOtRate = true;
+                    }
+                }
             } catch (e) {
                 console.warn('Failed to parse other_deductions_notes for ot_rate');
             }
         }
-        otRate = savedOtRate || (perHour * 1.25);
+        otRate = hasSavedOtRate ? savedOtRate : 0;
         
         // Calculate per hour and per minute from per day if not saved
         perHour = parseFloat(comp.per_hour_rate) || (perDay / 8);
@@ -2290,7 +2691,7 @@ function buildDTRView(records, empInfo, comp) {
         perDay = 500;
         perHour = perDay / 8;
         perMin = perHour / 60;
-        otRate = perHour * 1.25;
+        otRate = 0;
         console.log(`Trainer classification: Using fixed daily rate ₱${perDay.toFixed(2)}`);
     } else {
         // NO automatic salary ÷ 26 calculation - per day must be manually entered in DTR Calculator
@@ -2304,6 +2705,29 @@ function buildDTRView(records, empInfo, comp) {
     // Get late_start and end_time from payroll computation if available (default 8:00 like Generatepayroll.php)
     const savedLateStart = comp?.late_start || '8:00';
     const savedEndTime = comp?.end_time || '17:00';
+
+    const loadedMeta = parsePayrollDayOverrideMeta(comp, {
+        perDay: String(perDay || ''),
+        lateStart: savedLateStart,
+        endTime: savedEndTime
+    });
+    payrollListLoadedDayOverrideMeta = loadedMeta;
+
+    const headerDefaultValues = normalizePayrollOverrideValues(loadedMeta.default_values, {
+        perDay: String(perDay || ''),
+        lateStart: savedLateStart,
+        endTime: savedEndTime
+    });
+    const checkedValues = normalizePayrollOverrideValues(loadedMeta.checked_values, headerDefaultValues);
+    const checkedRowsSet = new Set((loadedMeta.checked_rows || []).map(v => String(v)));
+    const rowOverrideByDate = (loadedMeta.row_values && typeof loadedMeta.row_values === 'object') ? loadedMeta.row_values : {};
+
+    const headerPerDay = parseFloat(String(headerDefaultValues.perDay || '').replace(/,/g, '')) || 0;
+    if (headerPerDay > 0) {
+        perDay = headerPerDay;
+        perHour = perDay / 8;
+        perMin = perHour / 60;
+    }
 
     // Totals accumulators
     let totWorkHrs = 0, totLateMins = 0, totUtHrs = 0, totOtHrs = 0;
@@ -2376,22 +2800,31 @@ function buildDTRView(records, empInfo, comp) {
                 <div class="rate-display rate-plain">
                     <span class="peso-sign">₱</span>
                     <input type="text" id="edit_ot_rate" name="ot_rate" 
-                           class="rate-input-editable" value="${formatNum(otRate)}" 
+                              class="rate-input-editable" value="${hasSavedOtRate ? formatNum(otRate) : ''}" 
                            style="width: 70px; border: none; background: transparent; font-weight: 700; font-size: 12px; text-align: center; color: #333;"
                            oninput="recalculateAllRows()" onblur="formatOTRateInput(this)" ${!editModeEnabled ? 'readonly' : ''}>
                 </div>
             </div>
             <div class="tb5-rate-item rate-input-item">
                 <span class="tb5-rate-label">TIME START</span>
-                <input type="text" id="edit_late_start" name="late_start" value="${savedLateStart}" 
+                <input type="text" id="edit_late_start" name="late_start" value="${headerDefaultValues.lateStart}" 
                        class="time-input" maxlength="5" placeholder="8:00"
                        oninput="formatTime24(this)" onchange="recalculateAllRows()" ${!editModeEnabled ? 'readonly' : ''}>
             </div>
             <div class="tb5-rate-item rate-input-item">
                 <span class="tb5-rate-label">END TIME</span>
-                <input type="text" id="edit_end_time" name="end_time" value="${savedEndTime}" 
+                <input type="text" id="edit_end_time" name="end_time" value="${headerDefaultValues.endTime}" 
                        class="time-input" maxlength="5" placeholder="17:00"
                        oninput="formatTime24(this)" onchange="recalculateAllRows()" ${!editModeEnabled ? 'readonly' : ''}>
+            </div>
+            <div class="tb5-rate-item tb5-switch-item">
+                <span class="tb5-rate-label">DAY OVR EDIT</span>
+                <div class="segment-switch-wrap" title="Edit Per/Day, Time Start, and End Time for checked DAY OVR rows">
+                    <div class="segment-switch-track" role="group" aria-label="Toggle checked days edit mode">
+                        <button type="button" id="pl_checked_days_default_btn" class="segment-option segment-btn active" onclick="setPayrollCheckedDaysMode(false)">Default</button>
+                        <button type="button" id="pl_checked_days_checked_btn" class="segment-option segment-btn" onclick="setPayrollCheckedDaysMode(true)">Checked</button>
+                    </div>
+                </div>
             </div>
         </div>
     </div>`;
@@ -2402,6 +2835,7 @@ function buildDTRView(records, empInfo, comp) {
     <table class="dtr-table" id="dtrEditTable">
         <thead>
             <tr>
+                <th rowspan="3" class="th-single th-day-override">DAY<br>OVR</th>
                 <th rowspan="3" class="th-date">MO/YR<br>DATE</th>
                 <th rowspan="3" class="th-group th-am">AM IN</th>
                 <th rowspan="3" class="th-group th-pm">PM OUT</th>
@@ -2432,23 +2866,39 @@ function buildDTRView(records, empInfo, comp) {
         <tbody>`;
 
     records.forEach((rec, idx) => {
+        const rowDate = String(rec.dtr_date || '');
+        const isDayOverrideChecked = checkedRowsSet.has(rowDate);
+        const rowOverrideValues = rowOverrideByDate[rowDate] || null;
+        const effectiveRowValues = isDayOverrideChecked
+            ? normalizePayrollOverrideValues(rowOverrideValues, checkedValues)
+            : normalizePayrollOverrideValues(null, headerDefaultValues);
+        const rowPerDay = parseFloat(String(effectiveRowValues.perDay || '').replace(/,/g, '')) || perDay;
+        const rowPerHour = rowPerDay / 8;
+        const rowLateStart = effectiveRowValues.lateStart || headerDefaultValues.lateStart;
+        const rowEndTime = effectiveRowValues.endTime || headerDefaultValues.endTime;
+
         const isAbsent = rec.is_absent == 1;
         const isTraining = rec.is_training == 1;
         const isHalf   = rec.is_halfday == 1;
         // Training and Absent days have zero calculations
-        const workHrs  = (isAbsent || isTraining) ? 0 : (parseFloat(rec.total_work_hours) || 0);
-        const lateMins = (isAbsent || isTraining) ? 0 : (parseFloat(rec.late_minutes) || 0);
+        const amInRec = fmtTime24(rec.am_time_in);
+        const pmOutRec = fmtTime24(rec.pm_time_out);
+        const otOutRec = fmtTime24(rec.ot_time_out);
+        const workHrs  = (isAbsent || isTraining) ? 0 : calculateWorkHours(amInRec, pmOutRec, rowLateStart);
+        const lateMins = (isAbsent || isTraining) ? 0 : calculateLateMins(amInRec, rowLateStart, rowLateStart);
         // For halfday, undertime should be 0 (halfday deduction already covers not working full day)
-        const utHrs    = (isAbsent || isTraining || isHalf) ? 0 : (parseFloat(rec.undertime_hours) || 0);
-        const otHrs    = (isAbsent || isTraining) ? 0 : (parseFloat(rec.daily_ot_hours) || 0);
+        const utHrs    = (isAbsent || isTraining || isHalf) ? 0 : calculateUndertime(pmOutRec, rowEndTime, rowEndTime);
+        const otOutMins = parseTimeToMinutes(otOutRec);
+        const rowEndMins = parseTimeToMinutes(rowEndTime);
+        const otHrs = (isAbsent || isTraining) ? 0 : ((otOutMins && rowEndMins && otOutMins > rowEndMins) ? (otOutMins - rowEndMins) / 60 : 0);
         const govtDb   = parseFloat(rec.govt_deduct) || 0;
 
         // Compute row deductions (Training and Absent both have zero calculations)
-        const absentDed = isAbsent ? perDay : 0; // Training has NO absent deduction
-        const lateDed   = (isAbsent || isTraining) ? 0 : (lateMins / 60) * perHour;
+        const absentDed = isAbsent ? rowPerDay : 0; // Training has NO absent deduction
+        const lateDed   = (isAbsent || isTraining) ? 0 : (lateMins / 60) * rowPerHour;
         // For halfday, no undertime deduction (halfday covers it)
-        const utDed     = (isAbsent || isTraining || isHalf) ? 0 : utHrs * perHour;
-        const halfDed   = isHalf ? (perDay / 2) : 0;
+        const utDed     = (isAbsent || isTraining || isHalf) ? 0 : utHrs * rowPerHour;
+        const halfDed   = isHalf ? (rowPerDay / 2) : 0;
         const otPayRow  = (isAbsent || isTraining) ? 0 : otHrs * otRate;
 
         // ALWAYS recalculate net salary based on current row state (don't use stale database value)
@@ -2461,14 +2911,14 @@ function buildDTRView(records, empInfo, comp) {
         } else if (isHalf) {
             // Halfday: pay for half day minus late deduction (OT shown separately in summary)
             // No undertime deduction because halfday already accounts for not working full day
-            rowNet = (perDay / 2) - lateDed;
+            rowNet = (rowPerDay / 2) - lateDed;
         } else if (workHrs === 0 && otHrs === 0) {
             // No work hours and no OT = no pay (likely incomplete/invalid time entry)
             rowNet = 0;
         } else {
             // Calculate row net: Start with full day rate, subtract deductions (OT shown separately)
             // Pay full day minus late/undertime deductions (not workHrs * perHour to avoid double-counting)
-            rowNet = perDay - lateDed - utDed;
+            rowNet = rowPerDay - lateDed - utDed;
         }
 
         // Count as "worked" only if the row has actual time entries (not empty rows)
@@ -2507,18 +2957,19 @@ function buildDTRView(records, empInfo, comp) {
         const absentDays = isAbsent ? 1 : 0;
         
         // Automatic Calculations (same as main calculations for display)
-        const autoLate = (isAbsent || isTraining) ? 0 : (lateMins / 60) * perHour;
-        const autoUt = (isAbsent || isTraining) ? 0 : utHrs * perHour;
+        const autoLate = (isAbsent || isTraining) ? 0 : (lateMins / 60) * rowPerHour;
+        const autoUt = (isAbsent || isTraining) ? 0 : utHrs * rowPerHour;
         const autoOt = (isAbsent || isTraining) ? 0 : otHrs * otRate;
 
-        html += `<tr class="dtr-data-row ${(isAbsent || isTraining) ? 'absent-row' : ''}" data-record-id="${rec.id}" data-idx="${idx}" data-row="${idx+1}">`;
+        html += `<tr class="dtr-data-row ${(isAbsent || isTraining) ? 'absent-row' : ''}" data-record-id="${rec.id}" data-idx="${idx}" data-row="${idx+1}" data-dtr-date="${rowDate}">`;
+        html += `<td class="centered day-override-cell"><input type="checkbox" name="day_override_${idx}" class="dtr-day-override-toggle" data-idx="${idx}" onchange="handleDayOverrideToggleEdit(this)" ${isDayOverrideChecked ? 'checked' : ''} ${(!editModeEnabled || isAbsent || isTraining) ? 'disabled' : ''}></td>`;
         html += `<td class="date-cell"><div class="date-display">${dateDisplay}</div></td>`;
 
         // Simplified columns - only AM IN and PM OUT like Generatepayroll.php
         // Training and Absent days have no time entries
-        const amTimeValue = (isAbsent || isTraining) ? '' : fmtTime24(rec.am_time_in);
-        const pmTimeValue = (isAbsent || isTraining) ? '' : fmtTime24(rec.pm_time_out);
-        const otTimeValue = (isAbsent || isTraining) ? '' : fmtTime24(rec.ot_time_out);
+        const amTimeValue = (isAbsent || isTraining) ? '' : amInRec;
+        const pmTimeValue = (isAbsent || isTraining) ? '' : pmOutRec;
+        const otTimeValue = (isAbsent || isTraining) ? '' : otOutRec;
         
         html += `<td class="td-am"><input type="text" name="am_in_${idx}" class="dtr-input time24 input-am" value="${amTimeValue}" maxlength="5" onchange="recalculateRow(this.closest('tr'))" oninput="formatTime24(this); recalculateRow(this.closest('tr'))" placeholder="8:00" ${!editModeEnabled ? 'readonly' : ''}></td>`;
         html += `<td class="td-pm"><input type="text" name="pm_out_${idx}" class="dtr-input time24 input-pm" value="${pmTimeValue}" maxlength="5" onchange="recalculateRow(this.closest('tr'))" oninput="formatTime24(this); recalculateRow(this.closest('tr'))" placeholder="17:00" ${!editModeEnabled ? 'readonly' : ''}></td>`;
@@ -2551,7 +3002,7 @@ function buildDTRView(records, empInfo, comp) {
 
     // Totals footer with TB5 styling - with comma formatting
     html += `</tbody><tfoot><tr class="totals-row" id="totalsRow">`;
-    html += `<td class="totals-label" colspan="6">TOTALS:</td>`;
+    html += `<td class="totals-label" colspan="7">TOTALS:</td>`;
     html += `<td class="tot-work-hrs calc-highlight">${formatNum(totWorkHrs)}</td>`;
     html += `<td class="tot-late calc-highlight">${formatNum(totLateMins, 0)}</td>`;
     html += `<td class="tot-ut calc-highlight">${formatNum(totUtHrs)}</td>`;
@@ -2616,7 +3067,6 @@ function buildDTRView(records, empInfo, comp) {
     </div>`;
 
     // Payroll Summary below Training Payment - Uses totNetSalary from DTR column total
-    const totalDeductions = totAbsentDed + totLateDed + totUtDed + totHalfDed;
     
     // Get government deductions from payroll computation
     const sssContrib = parseFloat(comp?.sss_contribution) || 0;
@@ -2624,8 +3074,10 @@ function buildDTRView(records, empInfo, comp) {
     const pagibigContrib = parseFloat(comp?.pagibig_contribution) || 0;
     const totalGovtDeductions = sssContrib + philHealthContrib + pagibigContrib;
     
-    // Total all deductions (attendance + government)
-    const totalAllDeductions = totalDeductions + totalGovtDeductions;
+    // Show all deductions in the Total Deduction display.
+    // Attendance deductions are already reflected in per-row net values,
+    // but are still shown here for record/visibility.
+    const totalAllDeductions = totLateDed + totUtDed + totHalfDed + totalGovtDeductions;
     
     // Final Net Pay = Net Salary + Training + OT - Govt Deductions
     // Note: totNetSalary already has late/undertime/halfday deducted per-row, so do NOT subtract them again
@@ -2643,6 +3095,7 @@ function buildDTRView(records, empInfo, comp) {
         <div class="trainee-card-body">
             <div class="summary-two-column">
                 <div class="summary-column summary-column-left">
+                <div class="summary-section-header">Earnings Summary</div>
                 <div class="summary-row">
                     <span class="summary-label">Days Worked:</span>
                     <span class="summary-value" id="summary_days_worked">${daysWorked} days</span>
@@ -2654,18 +3107,6 @@ function buildDTRView(records, empInfo, comp) {
                 <div class="summary-row">
                     <span class="summary-label">Training:</span>
                     <span class="summary-value" id="summary_training_days">${totTrainingDays} days</span>
-                </div>
-                <div class="summary-row">
-                    <span class="summary-label">Late Deduct:</span>
-                    <span class="summary-value negative" id="summary_late_deduct">-${peso(totLateDed)}</span>
-                </div>
-                <div class="summary-row">
-                    <span class="summary-label">Undertime Deduct:</span>
-                    <span class="summary-value negative" id="summary_ut_deduct">-${peso(totUtDed)}</span>
-                </div>
-                <div class="summary-row">
-                    <span class="summary-label">Halfday Deduct:</span>
-                    <span class="summary-value negative" id="summary_half_deduct">-${peso(totHalfDed)}</span>
                 </div>
                 <div class="summary-row">
                     <span class="summary-label">OT Pay:</span>
@@ -2681,6 +3122,19 @@ function buildDTRView(records, empInfo, comp) {
                 </div>
             </div>
             <div class="summary-column summary-column-right">
+                <div class="summary-section-header">Other Deductions</div>
+                <div class="summary-row">
+                    <span class="summary-label">Late Deduct:</span>
+                    <span class="summary-value negative" id="summary_late_deduct">-${peso(totLateDed)}</span>
+                </div>
+                <div class="summary-row">
+                    <span class="summary-label">Undertime Deduct:</span>
+                    <span class="summary-value negative" id="summary_ut_deduct">-${peso(totUtDed)}</span>
+                </div>
+                <div class="summary-row">
+                    <span class="summary-label">Halfday Deduct:</span>
+                    <span class="summary-value negative" id="summary_half_deduct">-${peso(totHalfDed)}</span>
+                </div>
                 <div class="summary-section-header">Government Deductions</div>
                 <div class="summary-row">
                     <span class="summary-label">SSS:</span>
@@ -2718,9 +3172,9 @@ function recalculateRow(row) {
     
     if (!row) return;
     
-    // Get per day rate directly from the input field (not calculated from basic salary)
-    const perDayInput = document.getElementById('edit_per_day');
-    const perDay = perDayInput ? parseFloat(perDayInput.value.replace(/,/g, '')) || 0 : 0;
+    // Resolve effective values for this row (default/checked/day-override aware)
+    const effective = getEffectiveEditorValuesForRow(row);
+    const perDay = parseFloat(String(effective.perDay || '').replace(/,/g, '')) || 0;
 
     // Allow time-based calculations even when per-day rate is not set (0).
     // Monetary deductions will be zero when perDay is 0, but late/undertime/OT
@@ -2751,23 +3205,30 @@ function recalculateRow(row) {
         if (otOutInput) otOutInput.value = '';
     }
     
-    // Get late start and end time from editable inputs
-    const lateStartInput = document.getElementById('edit_late_start');
-    const endTimeInput = document.getElementById('edit_end_time');
-    const lateStart = lateStartInput?.value || '8:00';
-    const endTime = endTimeInput?.value || '17:00';
+    // Use effective row thresholds
+    const lateStart = effective.lateStart || '8:00';
+    const endTime = effective.endTime || '17:00';
     
-    // Get OT rate from input (user can override calculated value)
+    // OT rate should come only from saved/manual input (no automatic fallback)
     const otRateInput = document.getElementById('edit_ot_rate');
     const otRateFromInput = otRateInput ? (parseFloat(otRateInput.value.replace(/,/g, '')) || 0) : 0;
-    // Calculate OT rate if not provided in input
-    // perHour already calculated above; reuse it here
-    const calculatedOtRate = perHour * 1.25;
-    const finalOtRate = otRateFromInput > 0 ? otRateFromInput : calculatedOtRate;
+    const finalOtRate = otRateFromInput > 0 ? otRateFromInput : 0;
     
+    // Disable day override on rows blocked by absent/training; otherwise restore edit-mode state.
+    const dayOverrideToggle = row.querySelector('.dtr-day-override-toggle');
+    if (dayOverrideToggle) {
+        if (isAbsent || isTraining) {
+            dayOverrideToggle.checked = false;
+            dayOverrideToggle.disabled = true;
+            delete payrollListDayOverrideValues[idx];
+        } else {
+            dayOverrideToggle.disabled = !editModeEnabled;
+        }
+    }
+
     // Calculate values - Zero out if absent OR training
-    const workHrs = (isAbsent || isTraining) ? 0 : calculateWorkHours(amIn, pmOut);
-    const lateMins = (isAbsent || isTraining) ? 0 : calculateLateMins(amIn, lateStart);
+    const workHrs = (isAbsent || isTraining) ? 0 : calculateWorkHours(amIn, pmOut, lateStart);
+    const lateMins = (isAbsent || isTraining) ? 0 : calculateLateMins(amIn, lateStart, lateStart);
     
     // Check if halfday first (leaving around 12pm)
     let isHalfday = false;
@@ -2785,7 +3246,7 @@ function recalculateRow(row) {
     
     // Calculate undertime ONLY if NOT halfday
     // If halfday, no undertime is calculated (halfday deduction covers it)
-    const utHrs = (isAbsent || isTraining || isHalfday) ? 0 : calculateUndertime(pmOut, endTime);
+    const utHrs = (isAbsent || isTraining || isHalfday) ? 0 : calculateUndertime(pmOut, endTime, endTime);
     
     // OT calculation (if ot_out is after end time)
     const otOutMins = parseTimeToMinutes(otOut);
@@ -2986,11 +3447,10 @@ function updatePayrollSummary() {
     const pagibigContrib = parseFloat(currentComp?.pagibig_contribution) || 0;
     const totalGovtDeductions = sssContrib + philHealthContrib + pagibigContrib;
     
-    // Total attendance deductions
-    const totalAttendanceDeductions = totLateDed + totUtDed + totHalfDed;
-    
-    // Total all deductions (attendance + government)
-    const totalAllDeductions = totalAttendanceDeductions + totalGovtDeductions;
+    // Show all deductions in Total Deduction for visibility/record keeping.
+    // Late/undertime/halfday are already deducted in per-row net salary,
+    // so Final Net Pay will still subtract government deductions only.
+    const totalAllDeductions = totLateDed + totUtDed + totHalfDed + totalGovtDeductions;
     
     // Calculate final net pay: Net Salary + Training + OT - Govt Deductions
     // Note: totNetSalary already has late/undertime/halfday deducted per-row, so do NOT subtract them again
@@ -3040,6 +3500,7 @@ function deleteRow(idx) {
     
     const row = table.querySelector(`tr.dtr-data-row[data-idx="${idx}"]`);
     if (row) {
+        delete payrollListDayOverrideValues[String(idx)];
         row.remove();
         recalculateTotals();
     }
@@ -3098,6 +3559,20 @@ function toggleEditMode() {
             }
         }
     });
+
+    // Toggle day override checkbox controls
+    table.querySelectorAll('.dtr-day-override-toggle').forEach(toggle => {
+        const row = toggle.closest('tr');
+        const idx = row?.dataset?.idx;
+        const isAbsent = row?.querySelector(`input[name="absent_${idx}"]`)?.checked || false;
+        const isTraining = row?.querySelector(`input[name="training_${idx}"]`)?.checked || false;
+        toggle.disabled = !editModeEnabled || isAbsent || isTraining;
+    });
+
+    if (!editModeEnabled) {
+        payrollListCheckedDaysEditMode = false;
+        setPayrollCheckedModeLabel(false);
+    }
     
     // Toggle training payment inputs
     const trainingAmountInput = document.getElementById('view_training_amount');
@@ -3258,7 +3733,8 @@ async function saveDTRChanges() {
         end_time: endTime,
         // Training payment
         training_amount: trainingAmount,
-        training_remarks: trainingRemarks
+        training_remarks: trainingRemarks,
+        day_override_meta: buildPayrollListDayOverrideMetaForSave()
     };
     
     console.log('Saving DTR records:', payload);
@@ -3550,7 +4026,17 @@ function generatePayslipForCutoff() {
     const comp = currentComp;
     const perDay = parseFloat(comp.per_day_rate) || ((parseFloat(comp.basic_monthly_salary) || 0) / 26);
     const perHour = perDay / 8;
-    const otRate = parseFloat(comp.ot_rate) || perHour * 1.25;
+    let savedCutoffOtRate = 0;
+    if (comp.other_deductions_notes) {
+        try {
+            const notes = JSON.parse(comp.other_deductions_notes);
+            const parsed = parseFloat(notes?.ot_rate);
+            if (!isNaN(parsed) && parsed > 0) savedCutoffOtRate = parsed;
+        } catch (e) {
+            console.warn('Failed to parse other_deductions_notes for cutoff ot_rate');
+        }
+    }
+    const otRate = savedCutoffOtRate;
 
     let daysWorked = 0, totWorkHrs = 0, totLateMins = 0, totUtHrs = 0, totOtHrs = 0;
     let totLateDed = 0, totUtDed = 0, totHalfDed = 0, totOtPay = 0, totNetSalary = 0;
@@ -3626,8 +4112,10 @@ function generatePayslipForCutoff() {
     const trainingRemarks = trainingRemarksInput ? trainingRemarksInput.value.trim() : '';
 
     const totalEarnings = grossPay + totOtPay + trainingAmount;
-    const totalDeductions = totalHalfDeduct + totalGovtDed;
-    const netPay = totalEarnings - totalHalfDeduct - totalGovtDed;
+    // Attendance deductions are already reflected in row net salaries.
+    // Keep cutoff net pay aligned: deduct only government contributions here.
+    const totalDeductions = totalGovtDed;
+    const netPay = totalEarnings - totalGovtDed;
 
     // Determine cutoff label
     const periodName = comp.period_name || '';
