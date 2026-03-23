@@ -83,6 +83,7 @@ CREATE TABLE IF NOT EXISTS dtr_records (
     halfday_out TIME NULL,
     is_halfday BOOLEAN DEFAULT FALSE,
     is_absent BOOLEAN DEFAULT FALSE,
+    is_training BOOLEAN DEFAULT FALSE,
     total_work_hours DECIMAL(5, 2) DEFAULT 0.00,
     late_minutes INT DEFAULT 0,
     undertime_hours DECIMAL(5, 2) DEFAULT 0.00,

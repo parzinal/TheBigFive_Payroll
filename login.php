@@ -28,6 +28,47 @@ if (isset($_SESSION['user_id']) && isset($_SESSION['role'])) {
 
 $error = $sessionError;
 $success = '';
+$rateLimited = false;
+
+// --- Rate Limiting Helper ---
+function checkLoginRateLimit(PDO $pdo, string $ip, int $maxAttempts = 5, int $windowMinutes = 15): array {
+    // Create table if it doesn't exist
+    $pdo->exec("CREATE TABLE IF NOT EXISTS login_attempts (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        ip_address VARCHAR(45) NOT NULL,
+        attempted_at DATETIME NOT NULL DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_ip_time (ip_address, attempted_at)
+    ) ENGINE=InnoDB");
+
+    // Purge old records beyond window
+    $pdo->prepare("DELETE FROM login_attempts WHERE attempted_at < DATE_SUB(NOW(), INTERVAL ? MINUTE)")
+        ->execute([$windowMinutes]);
+
+    // Count recent attempts
+    $stmt = $pdo->prepare("SELECT COUNT(*) FROM login_attempts WHERE ip_address = ? AND attempted_at > DATE_SUB(NOW(), INTERVAL ? MINUTE)");
+    $stmt->execute([$ip, $windowMinutes]);
+    $count = (int)$stmt->fetchColumn();
+
+    if ($count >= $maxAttempts) {
+        // Calculate seconds remaining
+        $stmtOldest = $pdo->prepare("SELECT attempted_at FROM login_attempts WHERE ip_address = ? ORDER BY attempted_at ASC LIMIT 1");
+        $stmtOldest->execute([$ip]);
+        $oldest = $stmtOldest->fetchColumn();
+        $unlockTime = strtotime($oldest) + ($windowMinutes * 60);
+        $remaining = max(0, $unlockTime - time());
+        return ['blocked' => true, 'remaining' => $remaining, 'attempts' => $count];
+    }
+    return ['blocked' => false, 'remaining' => 0, 'attempts' => $count];
+}
+
+function recordLoginAttempt(PDO $pdo, string $ip): void {
+    $pdo->prepare("INSERT INTO login_attempts (ip_address, attempted_at) VALUES (?, NOW())")
+        ->execute([$ip]);
+}
+
+function clearLoginAttempts(PDO $pdo, string $ip): void {
+    $pdo->prepare("DELETE FROM login_attempts WHERE ip_address = ?")->execute([$ip]);
+}
 
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // Validate CSRF token
@@ -42,6 +83,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     } else {
         try {
             $pdo = getDBConnection();
+            $clientIp = $_SERVER['REMOTE_ADDR'] ?? '0.0.0.0';
+
+            // Check rate limit before processing
+            $rateCheck = checkLoginRateLimit($pdo, $clientIp);
+            if ($rateCheck['blocked']) {
+                $mins = ceil($rateCheck['remaining'] / 60);
+                $error = "Too many failed login attempts. Please try again in {$mins} minute(s).";
+                $rateLimited = true;
+            } else {
             
             // Check if input is email or username
             $stmt = $pdo->prepare("SELECT * FROM users WHERE (email = ? OR username = ?) AND status = 'active' LIMIT 1");
@@ -49,6 +99,9 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $user = $stmt->fetch();
             
             if ($user && password_verify($password, $user['password'])) {
+                // Clear rate limit on successful login
+                clearLoginAttempts($pdo, $clientIp);
+
                 // Initialize secure session
                 initializeSecureSession($user);
                 
@@ -76,10 +129,21 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                 redirectToProperDashboard($user['role']);
                 exit();
             } else {
+                // Record failed attempt for rate limiting
+                recordLoginAttempt($pdo, $clientIp);
+
                 // Log failed login attempt
                 logFailedLogin($email_or_username, 'Invalid credentials or account inactive');
-                $error = 'Invalid credentials or account is inactive';
+                $attemptsLeft = 5 - ($rateCheck['attempts'] + 1);
+                if ($attemptsLeft > 0) {
+                    $error = "Invalid credentials or account is inactive. {$attemptsLeft} attempt(s) remaining.";
+                } else {
+                    $error = 'Too many failed login attempts. Please try again in 15 minutes.';
+                    $rateLimited = true;
+                }
             }
+
+            } // end rate limit else
         } catch (PDOException $e) {
             error_log("Login Error: " . $e->getMessage());
             $error = 'An error occurred. Please try again later.';
@@ -175,7 +239,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                         <a href="forgotpass.php">Forgot your password?</a>
                     </div>
 
-                    <button type="submit" class="btn-login">LOGIN</button>
+                    <button type="submit" class="btn-login" id="loginBtn" <?php echo $rateLimited ? 'disabled style="opacity:0.6;cursor:not-allowed;"' : ''; ?>>LOGIN</button>
                 </form>
             </div>
         </div>
@@ -224,6 +288,18 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     document.exitFullscreen();
                 }
             }
+        }
+
+        // Prevent double-submit on login form (S1)
+        const loginForm = document.querySelector('.login-form');
+        const loginBtn = document.getElementById('loginBtn');
+        if (loginForm && loginBtn) {
+            loginForm.addEventListener('submit', function() {
+                loginBtn.disabled = true;
+                loginBtn.textContent = 'LOGGING IN...';
+                loginBtn.style.opacity = '0.6';
+                loginBtn.style.cursor = 'not-allowed';
+            });
         }
     </script>
 </body>

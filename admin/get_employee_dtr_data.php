@@ -5,12 +5,13 @@
  */
 
 require_once '../config/bootstrap.php';
+require_once '../config/auth.php';
 header('Content-Type: application/json');
 
 require_once '../config/database.php';
 
-// Check authentication
-if (!isset($_SESSION['user_id'])) {
+// Allow admin and staff roles
+if (!isAuthenticated() || (!isAdmin() && !isStaff())) {
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit();
 }
@@ -32,8 +33,8 @@ if ($periodId <= 0 && (empty($month) || !preg_match('/^\d{4}-\d{2}$/', $month)))
 try {
     $pdo = getDBConnection();
     
-    // Get employee info
-    $stmt = $pdo->prepare("SELECT id, employee_code, full_name, position, department, basic_monthly_salary FROM employees WHERE id = ?");
+    // Get employee info (include classification)
+    $stmt = $pdo->prepare("SELECT id, employee_code, full_name, position, department, basic_monthly_salary, classification FROM employees WHERE id = ?");
     $stmt->execute([$employeeId]);
     $employee = $stmt->fetch(PDO::FETCH_ASSOC);
     
@@ -58,6 +59,7 @@ try {
                 TIME_FORMAT(d.halfday_out, '%H:%i') as halfday_out,
                 d.is_halfday,
                 d.is_absent,
+                d.is_training,
                 d.total_work_hours,
                 d.late_minutes,
                 d.late_hours,
@@ -90,6 +92,7 @@ try {
                 TIME_FORMAT(d.halfday_out, '%H:%i') as halfday_out,
                 d.is_halfday,
                 d.is_absent,
+                d.is_training,
                 d.total_work_hours,
                 d.late_minutes,
                 d.late_hours,

@@ -4,20 +4,16 @@
  * Professional interface for adding new employees
  */
 
-// Set page title
-$page_title = 'Add Employee';
+// ── IMPORTANT: Process form BEFORE any HTML output ──────────────────────────
+// This must come first so we can set $success_message / $error_message
+// before the page renders, and avoid header-already-sent issues.
+require_once __DIR__ . '/../config/auth.php';       // starts session, CSRF, etc.
+require_once __DIR__ . '/../config/database.php';
+require_once __DIR__ . '/../config/account_logs_helper.php';
+require_once __DIR__ . '/../config/notifications_helper.php';
 
-// Include header
-require_once 'include/header.php';
-
-// Include database connection
-require_once '../config/database.php';
-
-// Include account logs helper
-require_once '../config/account_logs_helper.php';
-
-// Include sidebar
-require_once 'include/sidebar.php';
+// Require admin role
+requireAuth('admin');
 
 // Initialize variables
 $success_message = '';
@@ -27,93 +23,123 @@ $position = '';
 $basic_salary = '';
 $hire_date = '';
 $status = 'active';
+$classification = 'Fix Rate';
 
 // Handle form submission
-if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['add_employee'])) {
+if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['_form_add_employee'])) {
     // Validate CSRF token
     if (!validateCSRFToken()) {
         $error_message = 'Invalid security token. Please refresh the page and try again.';
     } else {
     try {
         $pdo = getDBConnection();
-        
-        // Get and sanitize form data (NO employee_code from form - it will be auto-generated)
-        $full_name = trim($_POST['full_name']);
-        $position = trim($_POST['position']);
-        $basic_salary = trim($_POST['basic_salary']);
-        $hire_date = trim($_POST['hire_date']);
-        $status = $_POST['status'];
-        
+        $pdo->setAttribute(PDO::ATTR_ERRMODE, PDO::ERRMODE_EXCEPTION);
+
+        // Get and sanitize form data
+        $full_name      = trim($_POST['full_name']      ?? '');
+        $position       = trim($_POST['position']       ?? '');
+        $basic_salary   = trim($_POST['basic_salary']   ?? '');
+        $hire_date      = trim($_POST['hire_date']      ?? '');
+        $status         = $_POST['status']              ?? 'active';
+        $classification = $_POST['classification']      ?? 'Fix Rate';
+
         // Validation
         $errors = [];
-        
+
         if (empty($full_name)) {
             $errors[] = "Full Name is required.";
         } elseif (strlen($full_name) < 2) {
             $errors[] = "Full Name must be at least 2 characters.";
+        } elseif (!preg_match('/^[\p{L}\s.\'\-]+$/u', $full_name)) {
+            $errors[] = "Full Name contains invalid characters.";
         }
-        
-        if (empty($basic_salary) || !is_numeric($basic_salary) || $basic_salary < 0) {
+
+        if ($basic_salary === '' || !is_numeric($basic_salary) || floatval($basic_salary) < 0) {
             $errors[] = "Valid Basic Monthly Salary is required.";
+        } elseif (floatval($basic_salary) > 99999999.99) {
+            $errors[] = "Basic Monthly Salary is too large.";
         }
-        
-        // If no errors, generate employee code and insert the employee
+
+        if (!empty($hire_date) && !preg_match('/^\d{4}-\d{2}-\d{2}$/', $hire_date)) {
+            $errors[] = "Invalid hire date format.";
+        }
+
+        $allowedStatuses = ['active', 'inactive'];
+        if (!in_array($status, $allowedStatuses)) {
+            $errors[] = "Invalid status value.";
+        }
+
+        $allowedClassifications = ['Fix Rate', 'Trainer'];
+        if (!in_array($classification, $allowedClassifications)) {
+            $classification = 'Fix Rate'; // default fallback
+        }
+
         if (empty($errors)) {
-            // Auto-generate employee code
+            // Auto-generate a unique employee code
             $currentYear = date('Y');
-            
-            // Get the next sequential number
-            $stmt = $pdo->query("SELECT MAX(id) as max_id FROM employees");
-            $result = $stmt->fetch();
-            $nextNumber = ($result['max_id'] ?? 0) + 1;
-            
-            // Format: EMP-XXX-YYYY (e.g., EMP-001-2026)
-            $employee_code = 'EMP-' . str_pad($nextNumber, 3, '0', STR_PAD_LEFT) . '-' . $currentYear;
-            
-            // Insert the employee
-            $stmt = $pdo->prepare("INSERT INTO employees (employee_code, full_name, position, basic_monthly_salary, hire_date, status) 
-                            VALUES (?, ?, ?, ?, ?, ?)");
-            
-            if ($stmt->execute([$employee_code, $full_name, $position, $basic_salary, $hire_date, $status])) {
-                $success_message = "Employee added successfully! Employee Code: " . htmlspecialchars($employee_code);
-                
-                // Log the action
+            $stmt = $pdo->query("SELECT COUNT(*) FROM employees");
+            $nextNumber = intval($stmt->fetchColumn()) + 1;
+            do {
+                $employee_code = 'EMP-' . str_pad($nextNumber, 3, '0', STR_PAD_LEFT) . '-' . $currentYear;
+                $chk = $pdo->prepare("SELECT id FROM employees WHERE employee_code = ?");
+                $chk->execute([$employee_code]);
+                if ($chk->fetchColumn()) { $nextNumber++; } else { break; }
+            } while (true);
+
+            // NULL-ify empty optional fields (MySQL strict mode rejects '' for DATE)
+            $hire_date_val = !empty($hire_date) ? $hire_date : null;
+            $position_val  = !empty($position)  ? $position  : null;
+
+            $stmt = $pdo->prepare("
+                INSERT INTO employees
+                    (employee_code, full_name, position, basic_monthly_salary, hire_date, status, classification)
+                VALUES (?, ?, ?, ?, ?, ?, ?)
+            ");
+            $stmt->execute([$employee_code, $full_name, $position_val, floatval($basic_salary), $hire_date_val, $status, $classification]);
+
+            $newEmpId = $pdo->lastInsertId();
+            $success_message = "Employee added successfully! Employee Code: " . htmlspecialchars($employee_code);
+
+            // Log action (errors here are non-fatal)
+            try {
                 logCreateAction(
-                    $_SESSION['user_id'],
-                    $_SESSION['username'],
+                    $_SESSION['user_id']  ?? null,
+                    $_SESSION['username'] ?? 'admin',
                     'Employee',
                     "{$full_name} ({$employee_code})",
                     $pdo
                 );
-                
-                // Clear form
-                $full_name = '';
-                $position = '';
-                $basic_salary = '';
-                $hire_date = '';
-                $status = 'active';
-            } else {
-                $error_message = "Error adding employee. Please try again.";
+                notifyEmployeeAdded($full_name, $newEmpId);
+                notifyStaff(
+                    'New Employee Added',
+                    "{$full_name} ({$employee_code}) has been added by " . ($_SESSION['username'] ?? 'Admin') . ".",
+                    'success', 'fa-user-plus', 'employee_list.php'
+                );
+            } catch (\Throwable $ignored) {
+                error_log("Add Employee post-actions error: " . $ignored->getMessage());
             }
+
+            // Clear form fields on success
+            $full_name = $position = $basic_salary = $hire_date = '';
+            $status = 'active';
+            $classification = 'Fix Rate';
         } else {
             $error_message = implode("<br>", $errors);
         }
     } catch (PDOException $e) {
         $error_message = "Database error: " . $e->getMessage();
+        error_log("Add Employee PDOException: " . $e->getMessage());
+    } catch (\Throwable $e) {
+        $error_message = "Unexpected error: " . $e->getMessage();
+        error_log("Add Employee Throwable: " . $e->getMessage() . " in " . $e->getFile() . ":" . $e->getLine());
     }
     } // end CSRF else
 }
 
-// Fetch positions for dropdown
-try {
-    $pdo = getDBConnection();
-    
-    // Fetch positions for dropdown
-    $stmt = $pdo->query("SELECT DISTINCT position FROM employees WHERE position IS NOT NULL AND position != '' ORDER BY position ASC");
-    $positions = $stmt->fetchAll();
-} catch (PDOException $e) {
-    $positions = [];
-}
+// ── NOW output the page ──────────────────────────────────────────────────────
+$page_title = 'Add Employee';
+require_once 'include/header.php';
+require_once 'include/sidebar.php';
 ?>
 
 <div class="main-content">
@@ -176,6 +202,7 @@ try {
         <div class="card-body">
             <form method="POST" action="" id="employeeForm">
                 <?php echo csrfTokenField(); ?>
+                <input type="hidden" name="_form_add_employee" value="1">
                 <div class="alert-info" style="margin-bottom: 20px; padding: 12px; background: #EFF6FF; border-left: 4px solid #2563EB; border-radius: 8px;">
                     <i class="fas fa-info-circle" style="color: #2563EB; margin-right: 8px;"></i>
                     <strong>Employee Code:</strong> Will be automatically generated (e.g., EMP-001-<?php echo date('Y'); ?>)
@@ -207,13 +234,8 @@ try {
                                class="form-input" 
                                value="<?php echo htmlspecialchars($position); ?>"
                                placeholder="e.g., Software Developer"
-                               list="positionsList">
-                        <datalist id="positionsList">
-                            <?php foreach ($positions as $pos): ?>
-                                <option value="<?php echo htmlspecialchars($pos['position']); ?>">
-                            <?php endforeach; ?>
-                        </datalist>
-                        <small class="form-help">Job title or role</small>
+                               oninput="this.value=this.value.replace(/[^a-zA-Z0-9 ]/g,'')">
+                        <small class="form-help">Job title or role (letters and numbers only)</small>
                     </div>
 
                     <!-- Basic Monthly Salary -->
@@ -260,6 +282,18 @@ try {
                         </select>
                         <small class="form-help">Current employment status</small>
                     </div>
+
+                    <!-- Employee Classification -->
+                    <div class="form-group">
+                        <label for="classification" class="form-label">
+                            <i class="fas fa-tags"></i> Employee Classification
+                        </label>
+                        <select id="classification" name="classification" class="form-select">
+                            <option value="Fix Rate" <?php echo ($classification !== 'Trainer') ? 'selected' : ''; ?>>Fix Rate</option>
+                            <option value="Trainer" <?php echo ($classification === 'Trainer') ? 'selected' : ''; ?>>Trainer</option>
+                        </select>
+                        <small class="form-help">Employee classification type</small>
+                    </div>
                 </div>
 
                 <!-- Form Actions -->
@@ -267,7 +301,7 @@ try {
                     <button type="button" class="btn btn-secondary" id="btnResetForm" onclick="resetForm()" disabled>
                         <i class="fas fa-undo"></i> Reset Form
                     </button>
-                    <button type="submit" name="add_employee" class="btn btn-primary">
+                    <button type="submit" id="btnSubmitEmployee" class="btn btn-primary">
                         <i class="fas fa-save"></i> Add Employee
                     </button>
                 </div>
@@ -769,11 +803,20 @@ document.getElementById('employeeForm').addEventListener('submit', function(e) {
         e.preventDefault();
         return false;
     }
+
+    // Disable after a brief delay so the browser finishes collecting POST data first
+    const submitBtn = document.getElementById('btnSubmitEmployee');
+    if (submitBtn) {
+        setTimeout(function() {
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+        }, 50);
+    }
 });
 
-// Auto-dismiss alerts after 5 seconds
+// O3: Auto-dismiss only success alerts after 5 seconds; keep errors visible
 setTimeout(function() {
-    const alerts = document.querySelectorAll('.alert');
+    const alerts = document.querySelectorAll('.alert-success');
     alerts.forEach(function(alert) {
         alert.style.animation = 'slideUp 0.3s ease';
         setTimeout(function() {

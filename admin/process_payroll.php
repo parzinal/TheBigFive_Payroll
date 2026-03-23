@@ -16,6 +16,7 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
 require_once '../config/database.php';
 require_once '../config/account_logs_helper.php';
 require_once '../config/csrf.php';
+require_once '../config/notifications_helper.php';
 
 if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
     http_response_code(405);
@@ -166,7 +167,7 @@ try {
             ]
         ]);
         
-        $stmt->execute([
+        $params = [
             $standardCurrent + $basicCurrent,
             $overtimeCurrent,
             floatval($_POST['standard_hours'] ?? 0) + floatval($_POST['overtime_hours'] ?? 0),
@@ -182,7 +183,20 @@ try {
             $netPay,
             $otherDeductionsNotes,
             $existingPayroll['id']
-        ]);
+        ];
+        try {
+            $stmt->execute($params);
+        } catch (PDOException $e) {
+            $pdo->rollBack();
+            echo json_encode([
+                'success' => false,
+                'message' => 'DB update error in process_payroll',
+                'error' => $e->getMessage(),
+                'query' => $stmt->queryString,
+                'params' => $params
+            ]);
+            exit;
+        }
         
         $payrollId = $existingPayroll['id'];
         $message = 'Payroll updated successfully';
@@ -215,13 +229,16 @@ try {
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'computed', NOW())
         ");
         
-        // Get employee's basic salary
+        // Get employee's basic salary from employees table (original value, not modified by bonuses/OT)
         $stmtEmp = $pdo->prepare("SELECT basic_monthly_salary FROM employees WHERE id = ?");
         $stmtEmp->execute([$employeeId]);
         $employeeData = $stmtEmp->fetch();
         $monthlySalary = floatval($employeeData['basic_monthly_salary'] ?? 0);
-        $perDayRate = $monthlySalary / 30; // TB5: 30 days a month computation
-        $perHourRate = $perDayRate / 8;
+        
+        // Calculate rates based on 26 working days per month (excluding Sundays)
+        // This matches the calculation in Generatepayroll.php, payroll_list.php, and the SQL stored procedures
+        $perDayRate = $monthlySalary / 26; // 26 working days per month (Mon-Sat)
+        $perHourRate = $perDayRate / 8;    // 8 hours per day
         $perMinuteRate = $perHourRate / 60;
         
         $otherDeductionsNotes = json_encode([
@@ -277,7 +294,7 @@ try {
             ]
         ]);
         
-        $stmt->execute([
+        $params = [
             $employeeId,
             $payrollPeriodId,
             $monthlySalary,
@@ -298,7 +315,20 @@ try {
             $totalEarnings,
             $totalDeductions,
             $netPay
-        ]);
+        ];
+        try {
+            $stmt->execute($params);
+        } catch (PDOException $e) {
+            $pdo->rollBack();
+            echo json_encode([
+                'success' => false,
+                'message' => 'DB insert error in process_payroll',
+                'error' => $e->getMessage(),
+                'query' => $stmt->queryString,
+                'params' => $params
+            ]);
+            exit;
+        }
         
         $payrollId = $pdo->lastInsertId();
         $message = 'Payroll created successfully';
@@ -341,6 +371,14 @@ try {
         $logInfo['period_name'] ?? "Period #{$payrollPeriodId}",
         $netPay,
         $pdo
+    );
+
+    // Send notification to admins and staff about payslip generation
+    notifyPayslipGenerated(
+        $logInfo['full_name'] ?? "Employee #{$employeeId}",
+        $logInfo['period_name'] ?? "Period #{$payrollPeriodId}",
+        $netPay,
+        $actionType
     );
     
     $pdo->commit();

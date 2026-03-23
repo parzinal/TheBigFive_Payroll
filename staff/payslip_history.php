@@ -1,4 +1,7 @@
 <?php
+header('Location: payslip_history_v2.php');
+exit;
+
 /**
  * Staff Payslip History Page
  * View employee payslip history
@@ -47,7 +50,7 @@ try {
     die("Database error: " . $e->getMessage());
 }
 
-require_once 'include/header.php';
+// O1: Removed duplicate require_once 'include/header.php' that was here
 require_once 'include/sidebar.php';
 ?>
 
@@ -144,7 +147,7 @@ require_once 'include/sidebar.php';
                 <div class="employee-payslip-cards-modern" id="employeeCardsContainer">
                     <?php foreach ($employees as $employee): ?>
                         <div class="employee-payslip-card-modern" 
-                             data-employee-name="<?php echo strtolower($employee['full_name']); ?>"
+                             data-employee-name="<?php echo htmlspecialchars(strtolower($employee['full_name']), ENT_QUOTES, 'UTF-8'); ?>"
                              data-has-payslips="<?php echo $employee['payslip_count'] > 0 ? 'yes' : 'no'; ?>">
                             <div class="card-header-modern">
                                 <div class="employee-avatar-modern <?php echo $employee['payslip_count'] > 0 ? 'has-payslips' : 'no-payslips'; ?>">

@@ -1,17 +1,17 @@
 <?php
 /**
- * Export Sample DTR Excel File
- * Generates a COMPLETE pre-filled DTR Excel file matching professor's TB5 format
- * with realistic employee data, working formulas, and correct computations.
+ * THIS FILE HAS BEEN DEPRECATED AND SHOULD BE DELETED.
  * 
- * This file can be used to:
- * 1. Verify all formula calculations are correct
- * 2. Test the import function (import_dtr.php) 
- * 3. Compare output with professor's Excel template
+ * Reason: Test file no longer needed; had anonymous access vulnerability (H7).
+ * Deprecated on: March 2, 2026
  * 
- * Usage: Navigate to admin/export_sample_dtr.php in browser
- * Or access with query params: ?salary=13000&name=FREEDOM&start=2025-10-13&end=2025-10-27
+ * Please delete this file manually from the project.
  */
+http_response_code(410);
+header('Content-Type: application/json');
+echo json_encode(['success' => false, 'message' => 'This endpoint has been removed.']);
+exit;
+
 
 // Start output buffering IMMEDIATELY to catch any stray output
 ob_start();
@@ -227,7 +227,7 @@ if (ob_get_level()) {
                 </tr>
             </thead>
             <tbody>
-                <tr><td>Mon</td><td>8:05 AM</td><td>5:00 PM</td><td>30 min late</td><td>8.00</td><td>30</td><td>0</td><td>0</td></tr>
+                <tr><td>Mon</td><td>8:00 AM</td><td>5:00 PM</td><td>30 min late</td><td>8.00</td><td>30</td><td>0</td><td>0</td></tr>
                 <tr><td>Tue</td><td>7:30 AM</td><td>5:00 PM</td><td>Normal (on time)</td><td>8.00</td><td>0</td><td>0</td><td>0</td></tr>
                 <tr><td>Wed</td><td>7:50 AM</td><td>7:00 PM</td><td>OT (2 hours)</td><td>8.00</td><td>15</td><td>0</td><td>2.00</td></tr>
                 <tr><td>Thu</td><td>—</td><td>—</td><td style="color:red">ABSENT</td><td>0</td><td>0</td><td>0</td><td>0</td></tr>
@@ -367,9 +367,11 @@ function buildSampleDTRSpreadsheet($salary, $employeeName, $startDate, $endDate)
     
     // Time reference cells - ACTUAL EXCEL TIME VALUES (critical for formula compatibility!)
     $sheet->setCellValue('H2', 17/24 + 46/1440);     // 5:46 PM
-    $sheet->setCellValue('I2', 7/24 + 35/1440);      // 7:35 AM - grace end / late threshold
+    $sheet->setCellValue('I1', 8/24);                // 8:00 AM - scheduled start time (for late calculation)
+    $sheet->setCellValue('I2', 8/24 + 5/1440);       // 8:05 AM - grace end / late threshold
     $sheet->setCellValue('J2', 17/24);               // 5:00 PM - standard end time
     $sheet->getStyle('H2:J2')->getNumberFormat()->setFormatCode('h:mm AM/PM');
+    $sheet->getStyle('I1')->getNumberFormat()->setFormatCode('h:mm AM/PM');
     
     // BASIC label + salary input
     $sheet->setCellValue('K2', 'BASIC');
@@ -545,8 +547,8 @@ function buildSampleDTRSpreadsheet($salary, $employeeName, $startDate, $endDate)
         // J: Total work HOURS: (MOD(E-B,1)*24)-1 for full day, MOD(I-H,1)*24 for halfday
         $sheet->setCellValue("J{$row}", "=IF(OR(F{$row}=\"X\",AND(B{$row}=\"\",E{$row}=\"\")),0,IF(AND(H{$row}<>\"\",I{$row}<>\"\"),(MOD(I{$row}-H{$row},1)*24),(MOD(E{$row}-B{$row},1)*24)-1))");
         
-        // K: Late in MINUTES: (arrival - grace_end) × 1440
-        $sheet->setCellValue("K{$row}", "=IF(OR(F{$row}=\"X\",B{$row}=\"\"),0,IF(B{$row}>\$I\$2,(B{$row}-\$I\$2)*1440,0))");
+        // K: Late in MINUTES: grace period is 5 min (8:00-8:05), arrive after 8:05 = late from 8:00
+        $sheet->setCellValue("K{$row}", "=IF(OR(F{$row}=\"X\",B{$row}=\"\"),0,IF(B{$row}>\$I\$2,(B{$row}-\$I\$1)*1440,0))");
         
         // L: Undertime in HOURS: (end_time - pm_out) × 24
         $sheet->setCellValue("L{$row}", "=IF(OR(F{$row}=\"X\",E{$row}=\"\"),0,IF(E{$row}<\$J\$2,(\$J\$2-E{$row})*24,0))");
@@ -851,8 +853,8 @@ function generateSampleDays($startDate, $endDate) {
         // Day 2: 30 minutes late (after 7:35 grace)
         [
             'type' => 'normal',
-            'am_in' => '8:05', 'am_out' => '12:00', 'pm_in' => '13:00', 'pm_out' => '17:00',
-            'remark' => '30 min late (8:05-7:35=30min)',
+            'am_in' => '8:00', 'am_out' => '12:00', 'pm_in' => '13:00', 'pm_out' => '17:00',
+            'remark' => '30 min late (example)',
             'expected' => 'J=8.00, K=30, L=0, M=0'
         ],
         // Day 3: OT day (2 hours OT after 5:45 PM threshold)

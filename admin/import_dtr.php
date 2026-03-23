@@ -67,6 +67,7 @@ if (!isset($_SESSION['user_id']) || $_SESSION['role'] !== 'admin') {
 require_once '../config/database.php';
 require_once '../config/account_logs_helper.php';
 require_once '../config/csrf.php';
+require_once '../config/notifications_helper.php';
 
 // CSRF check
 requireCSRFToken();
@@ -121,6 +122,22 @@ if (!in_array($fileExtension, $allowedExtensions)) {
     exit();
 }
 
+// M3: Validate MIME type to prevent disguised uploads
+$allowedMimeTypes = [
+    'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet', // xlsx
+    'application/vnd.ms-excel',                                          // xls
+    'application/vnd.ms-excel.sheet.macroEnabled.12',                    // xlsm
+    'text/csv',                                                          // csv
+    'text/plain',                                                        // csv fallback
+    'application/octet-stream',                                          // generic binary (some systems)
+    'application/zip',                                                   // xlsx/xlsm are ZIP-based
+];
+$detectedMime = mime_content_type($fileTmpPath);
+if ($detectedMime && !in_array($detectedMime, $allowedMimeTypes)) {
+    echo json_encode(['success' => false, 'message' => 'File MIME type mismatch. The uploaded file does not appear to be a valid spreadsheet.']);
+    exit();
+}
+
 try {
     $extractedData = [];
     
@@ -158,7 +175,7 @@ try {
         }
     }
     
-    if (empty($extractedData['dtr_records'])) {
+    if (empty($extractedData['dtr_records']) && empty($extractedData['multi_sheet'])) {
         // Provide diagnostic info to help debug
         $diagInfo = [];
         if (!empty($extractedData['employee_info']['full_name'])) {
@@ -203,6 +220,87 @@ try {
         exit();
     }
     
+    // ============================================================
+    // MULTI-SHEET MODE: If file has multiple DTR sheets with data
+    // ============================================================
+    if (!empty($extractedData['multi_sheet'])) {
+        $pdo = getDBConnection();
+        $sheetsData = [];
+        $totalRecords = 0;
+        $importedBy = $_SESSION['username'] ?? '';
+        
+        foreach ($extractedData['sheets'] as $sheetResult) {
+            $employeeInfo = $sheetResult['employee_info'];
+            $dtrRecords = $sheetResult['dtr_records'];
+            $totalRecords += count($dtrRecords);
+            
+            // Try to find existing employee
+            $employeeDetails = null;
+            $employeeId = null;
+            $empName = trim($employeeInfo['full_name'] ?? '');
+            $empCode = trim($employeeInfo['employee_code'] ?? '');
+            
+            if ($empName) {
+                $stmt = $pdo->prepare("SELECT * FROM employees WHERE LOWER(full_name) = LOWER(?) LIMIT 1");
+                $stmt->execute([$empName]);
+                $employeeDetails = $stmt->fetch(PDO::FETCH_ASSOC);
+            }
+            if (!$employeeDetails && $empCode) {
+                $stmt = $pdo->prepare("SELECT * FROM employees WHERE employee_code = ? LIMIT 1");
+                $stmt->execute([$empCode]);
+                $employeeDetails = $stmt->fetch(PDO::FETCH_ASSOC);
+            }
+            if ($employeeDetails) {
+                $employeeId = $employeeDetails['id'];
+            }
+            
+            $dates = array_column($dtrRecords, 'dtr_date');
+            $sheetStartDate = !empty($dates) ? min($dates) : date('Y-m-d');
+            $sheetEndDate = !empty($dates) ? max($dates) : date('Y-m-d');
+            
+            $sheetsData[] = [
+                'sheet_name' => $sheetResult['debug_sheet'] ?? 'Unknown',
+                'records_count' => count($dtrRecords),
+                'employee_info' => [
+                    'id' => $employeeId,
+                    'employee_code' => $employeeDetails['employee_code'] ?? ($employeeInfo['employee_code'] ?? ''),
+                    'full_name' => $employeeDetails['full_name'] ?? ($employeeInfo['full_name'] ?? ''),
+                    'position' => $employeeDetails['position'] ?? ($employeeInfo['position'] ?? ''),
+                    'department' => $employeeDetails['department'] ?? ($employeeInfo['department'] ?? ''),
+                    'basic_monthly_salary' => ($employeeInfo['basic_monthly_salary'] > 0 ? $employeeInfo['basic_monthly_salary'] : ($employeeDetails['basic_monthly_salary'] ?? 0)),
+                    'per_day_rate' => $employeeInfo['per_day_rate'] ?? 0,
+                    'is_trainer' => $employeeInfo['is_trainer'] ?? '',
+                    'is_fixrate' => $employeeInfo['is_fixrate'] ?? '',
+                    'is_existing' => $employeeDetails !== null
+                ],
+                'period_info' => [
+                    'id' => null,
+                    'period_name' => '',
+                    'start_date' => $sheetStartDate,
+                    'end_date' => $sheetEndDate,
+                    'pay_date' => null
+                ],
+                'schedule_thresholds' => $sheetResult['schedule_thresholds'] ?? [],
+                'trainee_summary' => $sheetResult['trainee_summary'] ?? ['total_count' => 0, 'total_cost' => 0, 'pay_per_unit' => 0],
+                'dtr_data' => $dtrRecords,
+            ];
+        }
+        
+        // Notify for the multi-sheet import
+        notifyDTRImported(count($sheetsData) . ' employees (multi-sheet)', $totalRecords, $importedBy);
+        
+        echo json_encode([
+            'success' => true,
+            'message' => 'DTR data extracted from ' . count($sheetsData) . ' sheets (' . $totalRecords . ' total records). Click "Save to Payroll List" to save.',
+            'preview_mode' => true,
+            'multi_sheet' => true,
+            'sheet_count' => count($sheetsData),
+            'records_count' => $totalRecords,
+            'sheets' => $sheetsData,
+        ]);
+        exit();
+    }
+
     // ============================================================
     // PREVIEW MODE: Extract data only, DO NOT save to database
     // User must click "Save" button to save to database
@@ -251,6 +349,11 @@ try {
     $startDate = !empty($dates) ? min($dates) : date('Y-m-d');
     $endDate = !empty($dates) ? max($dates) : date('Y-m-d');
     
+    // Notify admins and staff that a DTR Excel file was imported
+    $importedEmployeeName = $employeeDetails['full_name'] ?? ($employeeInfo['full_name'] ?? 'Unknown Employee');
+    $importedBy = $_SESSION['username'] ?? '';
+    notifyDTRImported($importedEmployeeName, count($dtrRecords), $importedBy);
+
     // Return extracted data for preview (NO database save)
     echo json_encode([
         'success' => true,
@@ -263,7 +366,10 @@ try {
             'full_name' => $employeeDetails['full_name'] ?? ($employeeInfo['full_name'] ?? ''),
             'position' => $employeeDetails['position'] ?? ($employeeInfo['position'] ?? ''),
             'department' => $employeeDetails['department'] ?? ($employeeInfo['department'] ?? ''),
-            'basic_monthly_salary' => $employeeDetails['basic_monthly_salary'] ?? ($employeeInfo['basic_monthly_salary'] ?? 0),
+            'basic_monthly_salary' => ($employeeInfo['basic_monthly_salary'] > 0 ? $employeeInfo['basic_monthly_salary'] : ($employeeDetails['basic_monthly_salary'] ?? 0)),
+            'per_day_rate' => $employeeInfo['per_day_rate'] ?? 0,
+            'is_trainer' => $employeeInfo['is_trainer'] ?? '',
+            'is_fixrate' => $employeeInfo['is_fixrate'] ?? '',
             'is_existing' => $employeeDetails !== null  // Flag if employee exists
         ],
         'period_info' => [
@@ -275,7 +381,13 @@ try {
         ],
         'schedule_thresholds' => $extractedData['schedule_thresholds'] ?? [],
         'trainee_summary' => $extractedData['trainee_summary'] ?? ['total_count' => 0, 'total_cost' => 0, 'pay_per_unit' => 0],
-        'dtr_data' => $dtrRecords
+        'dtr_data' => $dtrRecords,
+        'debug_salary' => [
+            'excel_basic' => $employeeInfo['basic_monthly_salary'],
+            'excel_perday' => $employeeInfo['per_day_rate'] ?? 0,
+            'db_basic' => $employeeDetails['basic_monthly_salary'] ?? 'N/A',
+            'final_basic' => ($employeeInfo['basic_monthly_salary'] > 0 ? $employeeInfo['basic_monthly_salary'] : ($employeeDetails['basic_monthly_salary'] ?? 0))
+        ]
     ] + (APP_DEBUG ? ['debug_time_values' => $extractedData['debug_time_values'] ?? []] : [])
     );
     
@@ -425,41 +537,84 @@ function parseCSVFileComplete($filePath, $periodStart = null, $periodEnd = null)
 }
 
 /**
- * Parse Excel file using PhpSpreadsheet - extracts ALL data
+ * Parse Excel file using PhpSpreadsheet - extracts ALL data from ALL sheets
+ * Supports multi-sheet DTR files (e.g., 10 DTR sheets in one Excel file).
+ * Skips worksheets that have no meaningful data (no employee name or time entries).
  */
 function parseExcelComplete($filePath, $extension, $periodStart = null, $periodEnd = null) {
     $spreadsheet = \PhpOffice\PhpSpreadsheet\IOFactory::load($filePath);
-    $worksheet = $spreadsheet->getActiveSheet();
     
-    // Try active sheet first; if no DTR data found, scan other sheets
-    $result = parseWorksheet($worksheet, $periodStart, $periodEnd);
+    $allResults = [];
     
-    // If no records found on active sheet, try other sheets
-    if (empty($result['dtr_records']) && $spreadsheet->getSheetCount() > 1) {
-        foreach ($spreadsheet->getSheetNames() as $sheetName) {
-            if ($sheetName === $worksheet->getTitle()) continue;
-            $altSheet = $spreadsheet->getSheetByName($sheetName);
-            $altResult = parseWorksheet($altSheet, $periodStart, $periodEnd);
-            if (!empty($altResult['dtr_records'])) {
-                $result = $altResult;
-                $result['debug_sheet'] = $sheetName;
-                break;
-            }
+    foreach ($spreadsheet->getSheetNames() as $sheetName) {
+        // Skip known non-DTR sheets
+        $sheetNameUpper = strtoupper(trim($sheetName));
+        if (in_array($sheetNameUpper, ['INSTRUCTIONS', 'README', 'HELP', 'NOTES', 'SUMMARY'])) {
+            continue;
         }
+        
+        $worksheet = $spreadsheet->getSheetByName($sheetName);
+        $result = parseWorksheet($worksheet, $periodStart, $periodEnd);
+        
+        // Skip worksheets that have no DTR data
+        if (empty($result['dtr_records'])) {
+            continue;
+        }
+        
+        // Skip worksheets where employee name is still the placeholder or empty
+        $empName = trim($result['employee_info']['full_name'] ?? '');
+        if (empty($empName) || $empName === '[ENTER NAME HERE]') {
+            continue;
+        }
+        
+        $result['debug_sheet'] = $sheetName;
+        $allResults[] = $result;
     }
     
-    return $result;
+    // If we found multiple sheets with data, return multi-sheet result
+    if (count($allResults) > 1) {
+        return [
+            'multi_sheet' => true,
+            'sheets' => $allResults,
+            'sheet_count' => count($allResults),
+        ];
+    }
+    
+    // If exactly one sheet found, return it directly (backward compatible)
+    if (count($allResults) === 1) {
+        return $allResults[0];
+    }
+    
+    // No data found in any sheet — return empty result for the active sheet (for debug info)
+    $activeSheet = $spreadsheet->getActiveSheet();
+    return parseWorksheet($activeSheet, $periodStart, $periodEnd);
 }
 
 /**
  * Parse a single worksheet for DTR data
  */
 function parseWorksheet($worksheet, $periodStart = null, $periodEnd = null) {
-    // Use toArray with formatData=true for general data (names, labels, etc.)
-    $rows = $worksheet->toArray(null, true, true, true);
+    // Try with formula evaluation first; fall back to raw values if formulas error out
+    // toArray() signature: (nullValue, calculateFormulas, formatData, returnCellRef)
+    try {
+        $rows = $worksheet->toArray(null, true, true, true);
+    } catch (\Exception $e) {
+        error_log('DTR Import: formula eval failed on toArray, retrying without calc: ' . $e->getMessage());
+        // calculateFormulas=FALSE so broken formulas are never evaluated
+        try {
+            $rows = $worksheet->toArray(null, false, true, true);
+        } catch (\Exception $e2) {
+            $rows = [];
+        }
+    }
     
-    // ALSO get raw (unformatted) data for reliable numeric time values
-    $rowsRaw = $worksheet->toArray(null, true, false, true);
+    // Raw (unformatted, no formula calc) data for reliable numeric time serial values
+    // calculateFormulas=FALSE, formatData=FALSE returns underlying Excel numeric types
+    try {
+        $rowsRaw = $worksheet->toArray(null, false, false, true);
+    } catch (\Exception $e) {
+        $rowsRaw = $rows;
+    }
     
     // Pass both formatted & raw arrays + worksheet object for maximum reliability
     return extractAllDataFromRows($rows, true, $periodStart, $periodEnd, $worksheet, $rowsRaw);
@@ -555,7 +710,11 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
         'employee_code' => null,
         'position' => null,
         'department' => null,
-        'basic_monthly_salary' => 0
+        'basic_monthly_salary' => 0,
+        'per_day_rate' => 0,
+        'ot_rate' => 0,
+        'is_trainer' => '',
+        'is_fixrate' => ''
     ];
     $dtrRecords = [];
     
@@ -568,6 +727,89 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
     // ========================================
     // STEP 1: Extract employee info from rows 1-3
     // ========================================
+    
+    // PRIORITY: Read salary & per-day directly from worksheet cells (most reliable)
+    // This avoids any toArray formatting/calculation issues
+    if ($worksheet !== null) {
+        // OLD format: G2='BASIC:', H2=salary, I2='PER/DAY:', J2=perDay
+        // NEW format: K2='BASIC', N2=salary, O2=perDay
+        $directSalaryCells = ['H', 'N'];   // Possible salary cells
+        $directPerDayCells = ['J', 'O'];   // Possible per-day cells
+        
+        foreach ($directSalaryCells as $sc) {
+            try {
+                $cell = $worksheet->getCell($sc . '2');
+                $rawVal = $cell->getValue();
+                error_log("DTR Import: Direct read {$sc}2 getValue=" . var_export($rawVal, true));
+                if ($rawVal !== null && $rawVal !== '' && is_numeric($rawVal)) {
+                    $salNum = floatval($rawVal);
+                    if ($salNum >= 1000 && $salNum <= 500000) {
+                        $employeeInfo['basic_monthly_salary'] = $salNum;
+                        error_log("DTR Import: Set basic_monthly_salary={$salNum} from cell {$sc}2");
+                        break;
+                    }
+                }
+                // Also try getFormattedValue
+                $fmtVal = $cell->getFormattedValue();
+                if ($fmtVal !== null && $fmtVal !== '') {
+                    $cleaned = floatval(preg_replace('/[^0-9.]/', '', $fmtVal));
+                    if ($cleaned >= 1000 && $cleaned <= 500000) {
+                        $employeeInfo['basic_monthly_salary'] = $cleaned;
+                        error_log("DTR Import: Set basic_monthly_salary={$cleaned} from formatted {$sc}2 ('{$fmtVal}')");
+                        break;
+                    }
+                }
+            } catch (\Exception $e) {
+                error_log("DTR Import: Error reading {$sc}2: " . $e->getMessage());
+            }
+        }
+        
+        foreach ($directPerDayCells as $pc) {
+            try {
+                $cell = $worksheet->getCell($pc . '2');
+                $rawVal = $cell->getValue();
+                error_log("DTR Import: Direct read {$pc}2 getValue=" . var_export($rawVal, true));
+                if ($rawVal !== null && $rawVal !== '' && is_numeric($rawVal)) {
+                    $rateNum = floatval($rawVal);
+                    if ($rateNum > 0 && $rateNum <= 100000) {
+                        $employeeInfo['per_day_rate'] = $rateNum;
+                        error_log("DTR Import: Set per_day_rate={$rateNum} from cell {$pc}2");
+                        break;
+                    }
+                }
+                $fmtVal = $cell->getFormattedValue();
+                if ($fmtVal !== null && $fmtVal !== '') {
+                    $cleaned = floatval(preg_replace('/[^0-9.]/', '', $fmtVal));
+                    if ($cleaned > 0 && $cleaned <= 100000) {
+                        $employeeInfo['per_day_rate'] = $cleaned;
+                        error_log("DTR Import: Set per_day_rate={$cleaned} from formatted {$pc}2");
+                        break;
+                    }
+                }
+            } catch (\Exception $e) {
+                error_log("DTR Import: Error reading {$pc}2: " . $e->getMessage());
+            }
+        }
+        
+        // Read TRAINER (M2) and FIXRATE (N2) fields
+        $trainerFixrateCells = ['M' => 'is_trainer', 'N' => 'is_fixrate'];
+        foreach ($trainerFixrateCells as $tfCol => $tfField) {
+            try {
+                $cell = $worksheet->getCell($tfCol . '2');
+                $rawVal = $cell->getValue();
+                if ($rawVal !== null && $rawVal !== '') {
+                    $employeeInfo[$tfField] = trim((string)$rawVal);
+                } else {
+                    $fmtVal = $cell->getFormattedValue();
+                    if ($fmtVal !== null && $fmtVal !== '') {
+                        $employeeInfo[$tfField] = trim((string)$fmtVal);
+                    }
+                }
+            } catch (\Exception $e) {
+                error_log("DTR Import: Error reading {$tfCol}2: " . $e->getMessage());
+            }
+        }
+    }
     
     // Check row 2 for "EMPLOYEE NAME: [name]"
     if (isset($rows[2])) {
@@ -597,7 +839,8 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
             }
             
             // Look for BASIC salary (column N or nearby)
-            if (strtoupper($valStr) === 'BASIC' || strtoupper($valStr) === 'VARIABLE') {
+            $upperVal = strtoupper(rtrim($valStr, ':'));
+            if ($upperVal === 'BASIC' || $upperVal === 'VARIABLE') {
                 // Check next few columns for numeric value
                 $colIndex = is_numeric($col) ? $col : ord($col) - ord('A');
                 for ($i = 1; $i <= 3; $i++) {
@@ -614,6 +857,22 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
                 }
             }
             
+            // Look for PER/DAY rate (OLD format: I2='PER/DAY:', J2=value)
+            if (in_array($upperVal, ['PER/DAY', 'PER DAY', 'PERDAY', 'PER/DAY RATE'])) {
+                $colIndex = is_numeric($col) ? $col : ord($col) - ord('A');
+                for ($i = 1; $i <= 3; $i++) {
+                    $checkCol = $hasLetterKeys ? chr(ord($col) + $i) : $colIndex + $i;
+                    if (isset($row2[$checkCol])) {
+                        $rateVal = trim($row2[$checkCol]);
+                        $rateNum = floatval(preg_replace('/[^0-9.]/', '', $rateVal));
+                        if ($rateNum > 0 && $rateNum <= 100000) {
+                            $employeeInfo['per_day_rate'] = $rateNum;
+                            break;
+                        }
+                    }
+                }
+            }
+
             // Also check for direct numeric salary values in row 2
             if ($employeeInfo['basic_monthly_salary'] == 0) {
                 $cleanVal = preg_replace('/[^0-9.]/', '', $valStr);
@@ -623,14 +882,81 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
                 }
             }
         }
+
+        // Fallback: try known cell positions for per_day_rate
+        // OLD format: J2. NEW format: O2.
+        if ($employeeInfo['per_day_rate'] == 0) {
+            $perDayCols = $hasLetterKeys ? ['J', 'O'] : [9, 14];
+            foreach ($perDayCols as $pdCol) {
+                // Try worksheet direct access first
+                if ($worksheet !== null && is_string($pdCol)) {
+                    try {
+                        $cell = $worksheet->getCell($pdCol . '2');
+                        $rawVal = $cell->getValue();
+                        if ($rawVal !== null && $rawVal !== '' && is_numeric($rawVal)) {
+                            $rateNum = floatval($rawVal);
+                            if ($rateNum > 0 && $rateNum <= 100000) {
+                                $employeeInfo['per_day_rate'] = $rateNum;
+                                break;
+                            }
+                        }
+                    } catch (\Exception $e) {}
+                }
+                // Fallback to toArray
+                if (isset($row2[$pdCol])) {
+                    $rateVal = trim($row2[$pdCol] ?? '');
+                    $rateNum = floatval(preg_replace('/[^0-9.]/', '', $rateVal));
+                    if ($rateNum > 0 && $rateNum <= 100000) {
+                        $employeeInfo['per_day_rate'] = $rateNum;
+                        break;
+                    }
+                }
+            }
+        }
+
+        // Fallback: try known cell positions for basic_monthly_salary
+        // OLD format: H2. NEW format: N2.
+        if ($employeeInfo['basic_monthly_salary'] == 0) {
+            $salaryCols = $hasLetterKeys ? ['H', 'N'] : [7, 13];
+            foreach ($salaryCols as $sCol) {
+                if ($worksheet !== null && is_string($sCol)) {
+                    try {
+                        $cell = $worksheet->getCell($sCol . '2');
+                        $rawVal = $cell->getValue();
+                        if ($rawVal !== null && $rawVal !== '' && is_numeric($rawVal)) {
+                            $salNum = floatval($rawVal);
+                            if ($salNum >= 1000 && $salNum <= 500000) {
+                                $employeeInfo['basic_monthly_salary'] = $salNum;
+                                break;
+                            }
+                        }
+                    } catch (\Exception $e) {}
+                }
+                if (isset($row2[$sCol])) {
+                    $salVal = trim($row2[$sCol] ?? '');
+                    $salNum = floatval(preg_replace('/[^0-9.]/', '', $salVal));
+                    if ($salNum >= 1000 && $salNum <= 500000) {
+                        $employeeInfo['basic_monthly_salary'] = $salNum;
+                        break;
+                    }
+                }
+            }
+        }
         
         // Extract schedule thresholds from row 2
-        // TB5 template: I2 = late threshold (7:35 AM), J2 = end time (5:00 PM)
-        $thresholdCols = [
-            'late_threshold' => $hasLetterKeys ? 'I' : 8,
-            'end_time' => $hasLetterKeys ? 'J' : 9
+        // OLD format: M2 = 'START:', N2 = '8:00', O2 = 'END:', P2 = '17:00'
+        // Try multiple column positions for schedule thresholds:
+        // NEW 10-sheet format: O2='START:', P2=threshold, Q2='END:', R2=endtime
+        // OLD format: M2='START:', N2=threshold, O2='END:', P2=endtime
+        // Older NEW format: I2 = late threshold, J2 = end time
+        $thresholdColSets = [
+            ['late_threshold' => $hasLetterKeys ? 'P' : 15, 'end_time' => $hasLetterKeys ? 'R' : 17],
+            ['late_threshold' => $hasLetterKeys ? 'N' : 13, 'end_time' => $hasLetterKeys ? 'P' : 15],
+            ['late_threshold' => $hasLetterKeys ? 'I' : 8,  'end_time' => $hasLetterKeys ? 'J' : 9],
         ];
+        foreach ($thresholdColSets as $thresholdCols) {
         foreach ($thresholdCols as $thKey => $thCol) {
+            if (!empty($scheduleThresholds[$thKey])) continue; // Already found from a previous column set
             $thVal = null;
             // Try worksheet direct access first
             if ($worksheet !== null && is_string($thCol)) {
@@ -666,7 +992,68 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
                 $scheduleThresholds[$thKey] = $thVal;
             }
         }
+        } // end foreach thresholdColSets
+        
+        // Read TRAINER/FIXRATE from M2/N2 (fallback for non-worksheet path)
+        if (empty($employeeInfo['is_trainer'])) {
+            $mKey = $hasLetterKeys ? 'M' : 12;
+            $trainerVal = trim((string)($row2[$mKey] ?? ''));
+            // Skip if it's the old "START:" label
+            if (!empty($trainerVal) && stripos($trainerVal, 'START') === false) {
+                $employeeInfo['is_trainer'] = $trainerVal;
+            }
+        }
+        if (empty($employeeInfo['is_fixrate'])) {
+            $nKey = $hasLetterKeys ? 'N' : 13;
+            $fixrateVal = trim((string)($row2[$nKey] ?? ''));
+            // Skip if it looks like a time value (old threshold position)
+            if (!empty($fixrateVal) && !preg_match('/^\d{1,2}:\d{2}$/', $fixrateVal)) {
+                $employeeInfo['is_fixrate'] = $fixrateVal;
+            }
+        }
     }
+
+        // Compute or read OT rate (template places OT RATE in L2 as formula)
+        if ($employeeInfo['ot_rate'] == 0) {
+            // Try direct worksheet cell first (L2 or other common positions)
+            $otCandidates = ['L', 'P'];
+            foreach ($otCandidates as $otCol) {
+                if ($worksheet !== null) {
+                    try {
+                        $cell = $worksheet->getCell($otCol . '2');
+                        $val = $cell ? $cell->getCalculatedValue() : null;
+                        if ($val !== null && $val !== '' && is_numeric($val)) {
+                            $employeeInfo['ot_rate'] = floatval($val);
+                            break;
+                        }
+                        // Try formatted value
+                        $fmt = $cell ? $cell->getFormattedValue() : null;
+                        if ($fmt !== null && $fmt !== '') {
+                            $clean = floatval(preg_replace('/[^0-9.]/', '', $fmt));
+                            if ($clean > 0) {
+                                $employeeInfo['ot_rate'] = $clean;
+                                break;
+                            }
+                        }
+                    } catch (\Exception $e) {
+                        // ignore and continue
+                    }
+                }
+                // Fallback to array value (row2)
+                if (isset($row2[$otCol])) {
+                    $clean = floatval(preg_replace('/[^0-9.]/', '', $row2[$otCol] ?? ''));
+                    if ($clean > 0) {
+                        $employeeInfo['ot_rate'] = $clean;
+                        break;
+                    }
+                }
+            }
+
+            // If still not found, compute from per_day_rate using template formula: OT = (per_day/8) * 1.25
+            if ($employeeInfo['ot_rate'] == 0 && $employeeInfo['per_day_rate'] > 0) {
+                $employeeInfo['ot_rate'] = floatval($employeeInfo['per_day_rate']) / 8.0 * 1.25;
+            }
+        }
     
     // ========================================
     // STEP 2: Detect TB5 header rows (4-5) and build column map
@@ -722,20 +1109,52 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
         }
     }
     
+    // Track which TB5 sub-format is detected
+    $isNewTB5Format = false;
+
     if ($detectTB5) {
-        // TB5 fixed column positions (24 columns A-X) - using letter keys for compatibility
-        $columnMap = [
-            'dtr_date' => $hasLetterKeys ? 'A' : 0,        // Column A - DATE
-            'am_time_in' => $hasLetterKeys ? 'B' : 1,      // Column B - AM IN
-            'pm_time_out' => $hasLetterKeys ? 'C' : 2,     // Column C - PM OUT
-            'is_absent' => $hasLetterKeys ? 'D' : 3,       // Column D - ABSENT
-            'ot_time_out' => $hasLetterKeys ? 'E' : 4,     // Column E - OT OUT
-            'total_work_hours' => $hasLetterKeys ? 'F' : 5, // Column F - TOT.WORK (in hours)
-            'late_minutes' => $hasLetterKeys ? 'G' : 6,    // Column G - LATE (in minutes)
-            'undertime_hours' => $hasLetterKeys ? 'H' : 7, // Column H - UNDERTM (in hours)
-            'daily_ot_hours' => $hasLetterKeys ? 'I' : 8,  // Column I - OT
-            'remarks' => $hasLetterKeys ? 'X' : 23         // Column X - REMARKS (N=HALFDAY DEDUCT calculated)
-        ];
+        // Detect OLD vs NEW TB5 column layout:
+        // OLD (simplified): A=Date, B=AM IN, C=PM OUT, D=ABSENT, E=TRAINING, F=OT OUT, ..., W=REMARKS
+        // NEW (full/export): A=Date, B=AM IN, C=AM OUT, D=PM IN, E=PM OUT, F=ABSENT, G=OT OUT, ..., Z=REMARKS
+        // Detection: In the NEW format, column F row 4 = 'ABSENT'. In the OLD format, D = 'ABSENT'.
+        $fKey = $hasLetterKeys ? 'F' : 5;
+        $row4F = strtoupper(trim($row4[$fKey] ?? ''));
+
+        if (strpos($row4F, 'ABSENT') !== false) {
+            // NEW full TB5 format (matches export_dtr_calculator.php / download_dtr_template.php)
+            $isNewTB5Format = true;
+            $columnMap = [
+                'dtr_date' => $hasLetterKeys ? 'A' : 0,         // Column A - DATE
+                'am_time_in' => $hasLetterKeys ? 'B' : 1,       // Column B - AM IN
+                'am_time_out' => $hasLetterKeys ? 'C' : 2,      // Column C - AM OUT
+                'pm_time_in' => $hasLetterKeys ? 'D' : 3,       // Column D - PM IN
+                'pm_time_out' => $hasLetterKeys ? 'E' : 4,      // Column E - PM OUT
+                'is_absent' => $hasLetterKeys ? 'F' : 5,        // Column F - ABSENT
+                'ot_time_out' => $hasLetterKeys ? 'G' : 6,      // Column G - OT OUT
+                'halfday_in' => $hasLetterKeys ? 'H' : 7,       // Column H - HALFDAY IN
+                'halfday_out' => $hasLetterKeys ? 'I' : 8,      // Column I - HALFDAY OUT
+                'total_work_hours' => $hasLetterKeys ? 'J' : 9,  // Column J - TOT.WORK
+                'late_minutes' => $hasLetterKeys ? 'K' : 10,     // Column K - LATE (in minutes)
+                'undertime_hours' => $hasLetterKeys ? 'L' : 11,  // Column L - UNDERTM (in hours)
+                'daily_ot_hours' => $hasLetterKeys ? 'M' : 12,   // Column M - OT
+                'remarks' => $hasLetterKeys ? 'AB' : 27         // Column AB - REMARKS
+            ];
+        } else {
+            // OLD simplified TB5 format (export_dtr_calculator.php layout)
+            $columnMap = [
+                'dtr_date' => $hasLetterKeys ? 'A' : 0,        // Column A - DATE
+                'am_time_in' => $hasLetterKeys ? 'B' : 1,      // Column B - AM IN
+                'pm_time_out' => $hasLetterKeys ? 'C' : 2,     // Column C - PM OUT
+                'is_absent' => $hasLetterKeys ? 'D' : 3,       // Column D - ABSENT
+                'is_training' => $hasLetterKeys ? 'E' : 4,     // Column E - TRAINING
+                'ot_time_out' => $hasLetterKeys ? 'F' : 5,     // Column F - OT OUT
+                'total_work_hours' => $hasLetterKeys ? 'G' : 6, // Column G - TOT.WORK (in hours)
+                'late_minutes' => $hasLetterKeys ? 'H' : 7,    // Column H - LATE (in minutes)
+                'undertime_hours' => $hasLetterKeys ? 'I' : 8, // Column I - UNDERTM (in hours)
+                'daily_ot_hours' => $hasLetterKeys ? 'J' : 9,  // Column J - OT
+                'remarks' => $hasLetterKeys ? 'V' : 21         // Column V - REMARKS
+            ];
+        }
     } else {
         // Fallback: Try to detect headers dynamically (original logic)
         // Look for a row with common DTR headers
@@ -769,6 +1188,8 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
                         $columnMap['pm_time_out'] = $col;
                     } elseif (in_array($header, ['absent', 'is_absent', 'abs', 'if absent', '(if absent)'])) {
                         $columnMap['is_absent'] = $col;
+                    } elseif (in_array($header, ['training', 'is_training', 'train'])) {
+                        $columnMap['is_training'] = $col;
                     } elseif (in_array($header, ['ot out', 'ot_out', 'overtime out', 'ot'])) {
                         $columnMap['ot_time_out'] = $col;
                     } elseif (in_array($header, ['remarks', 'notes'])) {
@@ -809,9 +1230,17 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
     };
     
     // Input column keys for TB5 format (user-editable cells)
-    $inputCols = $hasLetterKeys 
-        ? ['B', 'C', 'D', 'E', 'F', 'H', 'I'] 
-        : [1, 2, 3, 4, 5, 7, 8];
+    if ($isNewTB5Format) {
+        // New format: B=AM IN, C=AM OUT, D=PM IN, E=PM OUT, F=Absent, G=OT OUT, H=Halfday IN, I=Halfday OUT
+        $inputCols = $hasLetterKeys 
+            ? ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'] 
+            : [1, 2, 3, 4, 5, 6, 7, 8];
+    } else {
+        // Old format: B=AM IN, C=PM OUT, D=Absent, E=Training, F=OT OUT, H-I=Halfday
+        $inputCols = $hasLetterKeys 
+            ? ['B', 'C', 'D', 'E', 'F', 'H', 'I'] 
+            : [1, 2, 3, 4, 5, 7, 8];
+    }
     
     foreach ($rows as $rowNum => $row) {
         if (!is_array($row)) {
@@ -993,9 +1422,14 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
         $record = [
             'dtr_date' => $parsedDate,
             'am_time_in' => null,
+            'am_time_out' => null,
+            'pm_time_in' => null,
             'pm_time_out' => null,
             'is_absent' => 0,
+            'is_training' => 0,
             'ot_time_out' => null,
+            'halfday_in' => null,
+            'halfday_out' => null,
             'total_work_hours' => 0,
             'late_minutes' => 0,
             'undertime_hours' => 0,
@@ -1004,7 +1438,7 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
         ];
         
         // Parse time fields - use worksheet directly if available for maximum reliability
-        $timeFields = ['am_time_in', 'pm_time_out', 'ot_time_out'];
+        $timeFields = ['am_time_in', 'am_time_out', 'pm_time_in', 'pm_time_out', 'ot_time_out', 'halfday_in', 'halfday_out'];
         foreach ($timeFields as $field) {
             if (isset($columnMap[$field])) {
                 $colKey = $columnMap[$field];
@@ -1079,6 +1513,21 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
             $record['is_absent'] = in_array($absentValue, ['yes', 'y', '1', 'true', 'absent', 'x', '✓', '✔', 'checked']) ? 1 : 0;
         }
         
+        // Parse training status
+        if (isset($columnMap['is_training'])) {
+            $trainingValue = strtolower(trim((string)($getCell($row, $columnMap['is_training']) ?? '')));
+            $record['is_training'] = in_array($trainingValue, ['yes', 'y', '1', 'true', 'training', 'x', '✓', '✔', 'checked']) ? 1 : 0;
+        }
+        
+        // For NEW TB5 format: detect training from remarks column (Z)
+        // The export writes "TRAINING" in the remarks column for training rows
+        if ($isNewTB5Format && isset($columnMap['remarks']) && $record['is_training'] == 0) {
+            $remarkVal = strtolower(trim((string)($getCell($row, $columnMap['remarks']) ?? '')));
+            if (strpos($remarkVal, 'training') !== false) {
+                $record['is_training'] = 1;
+            }
+        }
+        
         // Parse numeric fields (calculated values from Excel)
         $numericFields = ['total_work_hours', 'late_minutes', 'undertime_hours', 'daily_ot_hours'];
         foreach ($numericFields as $field) {
@@ -1094,23 +1543,33 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
             $record['remarks'] = ($remarkVal !== null) ? trim((string)$remarkVal) : null;
         }
         
-        // Parse trainee columns (Y = count, Z = per-trainee payment, AA = total)
-        $traineeCountKey = $hasLetterKeys ? 'Y' : 24;
-        $traineePayKey   = $hasLetterKeys ? 'Z' : 25;
-        $traineeTotalKey = $hasLetterKeys ? 'AA' : 26;
-        
-        $traineeCount = floatval($getCell($row, $traineeCountKey) ?? 0);
-        $traineePayPerUnit = floatval($getCell($row, $traineePayKey) ?? 0);
-        $traineeTotal = floatval($getCell($row, $traineeTotalKey) ?? 0);
-        
-        // If AA is formula-computed and missing, calculate from Y and Z
-        if ($traineeTotal == 0 && $traineeCount > 0 && $traineePayPerUnit > 0) {
-            $traineeTotal = $traineeCount * $traineePayPerUnit;
+        // Parse trainee columns — only for OLD format where X=count, Y=per-trainee, Z=total
+        // In NEW format, X=Gov't, Y=Salary, Z=Remarks (no per-row trainee data)
+        if (!$isNewTB5Format) {
+            $traineeCountKey = $hasLetterKeys ? 'X' : 23;
+            $traineePayKey   = $hasLetterKeys ? 'Y' : 24;
+            $traineeTotalKey = $hasLetterKeys ? 'Z' : 25;
+            
+            $traineeCount = floatval($getCell($row, $traineeCountKey) ?? 0);
+            $traineePayPerUnit = floatval($getCell($row, $traineePayKey) ?? 0);
+            $traineeTotal = floatval($getCell($row, $traineeTotalKey) ?? 0);
+            
+            if ($traineeTotal == 0 && $traineeCount > 0 && $traineePayPerUnit > 0) {
+                $traineeTotal = $traineeCount * $traineePayPerUnit;
+            }
+            
+            $record['trainee_count']     = (int)$traineeCount;
+            $record['trainee_pay_each']  = round($traineePayPerUnit, 2);
+            $record['trainee_total_pay'] = round($traineeTotal, 2);
+        } else {
+            $record['trainee_count']     = 0;
+            $record['trainee_pay_each']  = 0;
+            $record['trainee_total_pay'] = 0;
         }
-        
-        $record['trainee_count']     = (int)$traineeCount;
-        $record['trainee_pay_each']  = round($traineePayPerUnit, 2);
-        $record['trainee_total_pay'] = round($traineeTotal, 2);
+
+        // For new format, extract training payment from summary cell (e.g., N44/O44/P44)
+        // Only do this once per import (after all rows processed)
+        // This logic will be used after the foreach loop below
         
         // SERVER-SIDE work_hours calculation (belt-and-suspenders with JS recalculation)
         // This ensures work_hours has a value even if JS recalculation fails
@@ -1138,21 +1597,186 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
         );
     }
     
+    // For new format, extract training payment from summary section below totals.
+    // The export/template writes "TRAINING PAYMENT:" label in column A, with the value in column B.
+    // The row varies depending on how many data rows exist, so we scan for it.
+    $training_payment = 0;
+    $training_remarks = '';
+    // Scan for training payment in BOTH old and new formats
+    {
+        $aKey = $hasLetterKeys ? 'A' : 0;
+        $bKey = $hasLetterKeys ? 'B' : 1;
+        $cKey = $hasLetterKeys ? 'C' : 2;
+        
+        // Method 1: Scan rows after data section for "TRAINING PAYMENT" label in column A
+        $scanStart = $dataEndRow + 1; // Start after data rows (row 37+)
+        $scanEnd = min($dataEndRow + 15, count($rows)); // Scan up to 15 rows past data
+        
+        $fKey = $hasLetterKeys ? 'F' : 5;
+        $hKey = $hasLetterKeys ? 'H' : 7;
+        
+        for ($scanRow = $scanStart; $scanRow <= $scanEnd; $scanRow++) {
+            if (!isset($rows[$scanRow])) continue;
+            $cellA = strtoupper(trim((string)($rows[$scanRow][$aKey] ?? '')));
+            if (strpos($cellA, 'TRAINING') !== false && strpos($cellA, 'PAYMENT') !== false) {
+                // Found the training payment label row — read column B first (summary format)
+                $tpVal = null;
+                
+                // Try worksheet directly first (most reliable for formulas)
+                if ($worksheet !== null && is_string($bKey)) {
+                    try {
+                        $tpCell = $worksheet->getCell($bKey . $scanRow);
+                        $tpVal = $tpCell ? $tpCell->getCalculatedValue() : null;
+                    } catch (\Exception $e) {}
+                }
+                
+                // Fallback to array value
+                if ($tpVal === null || !is_numeric($tpVal)) {
+                    $tpVal = $rows[$scanRow][$bKey] ?? null;
+                }
+                
+                if ($tpVal !== null && is_numeric($tpVal) && floatval($tpVal) > 0) {
+                    $training_payment = floatval($tpVal);
+                }
+                
+                // New export format: amount is in column F (after "Amount:" label in E)
+                if ($training_payment == 0) {
+                    $tpValF = null;
+                    if ($worksheet !== null && is_string($fKey)) {
+                        try {
+                            $tpCellF = $worksheet->getCell($fKey . $scanRow);
+                            $tpValF = $tpCellF ? $tpCellF->getCalculatedValue() : null;
+                        } catch (\Exception $e) {}
+                    }
+                    if ($tpValF === null || !is_numeric($tpValF)) {
+                        $tpValF = $rows[$scanRow][$fKey] ?? null;
+                    }
+                    if ($tpValF !== null && is_numeric($tpValF) && floatval($tpValF) > 0) {
+                        $training_payment = floatval($tpValF);
+                    }
+                }
+                
+                // Extract training remarks — try column C first (summary format)
+                // But skip if column C contains the literal label "Remarks" or similar
+                $trRemarks = trim((string)($rows[$scanRow][$cKey] ?? ''));
+                if (!empty($trRemarks) && !preg_match('/^remarks?:?$/i', $trRemarks)) {
+                    $training_remarks = $trRemarks;
+                } elseif ($worksheet !== null && is_string($cKey)) {
+                    try {
+                        $trCell = $worksheet->getCell($cKey . $scanRow);
+                        $trRemarks = $trCell ? trim((string)$trCell->getValue()) : '';
+                        if (!empty($trRemarks) && !preg_match('/^remarks?:?$/i', $trRemarks)) {
+                            $training_remarks = $trRemarks;
+                        }
+                    } catch (\Exception $e) {}
+                }
+
+                // New export format: remarks may be spread across columns H..L (e.g., H,I,J,K,L)
+                    if (empty($training_remarks)) {
+                    // Build candidate columns depending on letter/key mode
+                    // Include column D (template's remarks input) to be robust
+                    if ($hasLetterKeys) {
+                        $remarksCols = ['C','D','H','I','J','K','L'];
+                    } else {
+                        $remarksCols = [2,3,7,8,9,10,11];
+                    }
+                    $colRemarks = [];
+                    foreach ($remarksCols as $rKey) {
+                        // 1) Try the rows array (already formatted by toArray)
+                        if (isset($rows[$scanRow][$rKey]) && trim((string)$rows[$scanRow][$rKey]) !== '') {
+                            $colRemarks[] = trim((string)$rows[$scanRow][$rKey]);
+                            continue;
+                        }
+
+                        // 2) Try worksheet methods if available (calculated/formatted/raw)
+                        if ($worksheet !== null && is_string($rKey)) {
+                            try {
+                                $cellRef = $rKey . $scanRow;
+                                $cell = $worksheet->getCell($cellRef);
+                                // Prefer calculated value for formula cells
+                                $val = null;
+                                try {
+                                    $val = $cell ? $cell->getCalculatedValue() : null;
+                                } catch (\Exception $e) {
+                                    // ignore
+                                }
+                                if ($val === null || $val === '') {
+                                    $fmt = null;
+                                    try { $fmt = $cell ? $cell->getFormattedValue() : null; } catch (\Exception $e) { }
+                                    if ($fmt !== null && $fmt !== '') $val = $fmt;
+                                }
+                                if ($val === null || $val === '') {
+                                    try { $val = $cell ? $cell->getValue() : null; } catch (\Exception $e) { }
+                                }
+                                if ($val !== null && trim((string)$val) !== '') {
+                                    $colRemarks[] = trim((string)$val);
+                                    continue;
+                                }
+                            } catch (\Exception $e) {
+                                // ignore and continue
+                            }
+                        }
+                    }
+                    if (!empty($colRemarks)) {
+                        // Filter out any cells that are just the label 'Remarks' and prefer user input
+                        $filtered = array_filter($colRemarks, function($v){ return !preg_match('/^remarks?:?$/i', trim($v)); });
+                        if (!empty($filtered)) {
+                            $training_remarks = implode(' ', array_filter($filtered));
+                        } else {
+                            $training_remarks = implode(' ', array_filter($colRemarks));
+                        }
+                    }
+                }
+                
+                // If we found the amount, stop scanning
+                if ($training_payment > 0) break;
+                // Otherwise continue scanning for the summary row which has B=amount
+            }
+        }
+        
+        // Method 2: If scan didn't find it, try well-known fixed positions (template = B43)
+        if ($training_payment == 0 && $worksheet !== null) {
+            $fixedCells = ['B43', 'B44', 'B45'];
+            foreach ($fixedCells as $cellRef) {
+                try {
+                    $rowNum43 = intval(substr($cellRef, 1));
+                    $labelCell = $worksheet->getCell('A' . $rowNum43);
+                    $labelVal = $labelCell ? strtoupper(trim((string)$labelCell->getValue())) : '';
+                    if (strpos($labelVal, 'TRAINING') !== false) {
+                        $cell = $worksheet->getCell($cellRef);
+                        $val = $cell ? $cell->getCalculatedValue() : null;
+                        if ($val !== null && is_numeric($val) && floatval($val) > 0) {
+                            $training_payment = floatval($val);
+                        }
+                        // Also get remarks from column C
+                        if (empty($training_remarks)) {
+                            $trCell = $worksheet->getCell('C' . $rowNum43);
+                            $trRemarks = $trCell ? trim((string)$trCell->getValue()) : '';
+                            if (!empty($trRemarks)) {
+                                $training_remarks = $trRemarks;
+                            }
+                        }
+                        break;
+                    }
+                } catch (\Exception $e) {}
+            }
+        }
+    }
     return [
         'employee_info' => $employeeInfo,
         'dtr_records' => $dtrRecords,
         'schedule_thresholds' => $scheduleThresholds,
-        // Trainee summary: sum all trainee_total_pay across rows
+        // Trainee summary: sum all trainee_total_pay across rows (old format) or use summary cell (new format)
         'trainee_summary' => [
-            'total_count'   => array_sum(array_column($dtrRecords, 'trainee_count')),
-            'total_cost'    => round(array_sum(array_column($dtrRecords, 'trainee_total_pay')), 2),
-            // For per-trainee rate, take first non-zero value found
-            'pay_per_unit'  => (function() use ($dtrRecords) {
+            'total_count'   => $isNewTB5Format ? 0 : array_sum(array_column($dtrRecords, 'trainee_count')),
+            'total_cost'    => $training_payment > 0 ? $training_payment : round(array_sum(array_column($dtrRecords, 'trainee_total_pay')), 2),
+            'pay_per_unit'  => $isNewTB5Format ? 0 : (function() use ($dtrRecords) {
                 foreach ($dtrRecords as $r) {
                     if (($r['trainee_pay_each'] ?? 0) > 0) return $r['trainee_pay_each'];
                 }
                 return 0;
-            })()
+            })(),
+            'training_remarks' => $training_remarks
         ],
         'debug_format' => $detectTB5 ? 'TB5 detected (rows 4-5 headers, data from row 6)' : 'Generic/fallback detection',
         'debug_data_start_row' => $dataStartRow,

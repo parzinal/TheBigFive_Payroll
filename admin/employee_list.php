@@ -42,7 +42,11 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
         $employee_code = trim($_POST['employee_code']);
         $full_name = trim($_POST['full_name']);
         $position = trim($_POST['position']);
-        $department = trim($_POST['department']);
+        $classification = trim($_POST['classification']);
+        $allowedClassifications = ['Fix Rate', 'Trainer'];
+        if (!in_array($classification, $allowedClassifications)) {
+            $classification = 'Fix Rate';
+        }
         $basic_salary = floatval($_POST['basic_salary']);
         $hire_date = trim($_POST['hire_date']);
         $status = trim($_POST['status']);
@@ -76,7 +80,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             employee_code = ?, 
             full_name = ?, 
             position = ?, 
-            department = ?, 
+            classification = ?, 
             basic_monthly_salary = ?, 
             hire_date = ?, 
             status = ?,
@@ -87,7 +91,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
             $employee_code,
             $full_name,
             $position,
-            $department,
+            $classification,
             $basic_salary,
             $hire_date,
             $status,
@@ -119,7 +123,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action']) && $_POST['
 // Fetch all employees from database
 try {
     $pdo = getDBConnection();
-    $stmt = $pdo->prepare("SELECT id, employee_code, full_name, position, department, basic_monthly_salary, hire_date, status, created_at FROM employees ORDER BY created_at DESC");
+    $stmt = $pdo->prepare("SELECT id, employee_code, full_name, position, classification, basic_monthly_salary, hire_date, status, created_at FROM employees ORDER BY created_at DESC");
     $stmt->execute();
     $employees = $stmt->fetchAll();
 } catch (PDOException $e) {
@@ -206,7 +210,7 @@ require_once 'include/sidebar.php';
                             <th>Employee Code</th>
                             <th>Full Name</th>
                             <th>Position</th>
-                            <th>Department</th>
+                            <th>Employee Classification</th>
                             <th>Monthly Salary</th>
                             <th>Hire Date</th>
                             <th>Status</th>
@@ -227,7 +231,7 @@ require_once 'include/sidebar.php';
                                         </div>
                                     </td>
                                     <td><?php echo htmlspecialchars($employee['position'] ?: 'N/A'); ?></td>
-                                    <td><?php echo htmlspecialchars($employee['department'] ?: 'N/A'); ?></td>
+                                    <td><?php echo htmlspecialchars($employee['classification'] ?: 'N/A'); ?></td>
                                     <td>
                                         <span class="salary-amount">₱<?php echo number_format($employee['basic_monthly_salary'], 2); ?></span>
                                     </td>
@@ -266,7 +270,7 @@ require_once 'include/sidebar.php';
                                     <td>
                                         <div class="action-buttons">
                                             <button class="btn-icon btn-edit" title="Edit Employee" 
-                                                    onclick="openEditModal(<?php echo $employee['id']; ?>, '<?php echo htmlspecialchars($employee['employee_code'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($employee['full_name'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($employee['position'] ?: '', ENT_QUOTES); ?>', '<?php echo htmlspecialchars($employee['department'] ?: '', ENT_QUOTES); ?>', <?php echo $employee['basic_monthly_salary']; ?>, '<?php echo $employee['hire_date'] ?: ''; ?>', '<?php echo $employee['status']; ?>')">
+                                                    onclick="openEditModal(<?php echo $employee['id']; ?>, '<?php echo htmlspecialchars($employee['employee_code'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($employee['full_name'], ENT_QUOTES); ?>', '<?php echo htmlspecialchars($employee['position'] ?: '', ENT_QUOTES); ?>', '<?php echo htmlspecialchars($employee['classification'] ?: 'Fix Rate', ENT_QUOTES); ?>', <?php echo $employee['basic_monthly_salary']; ?>, '<?php echo $employee['hire_date'] ?: ''; ?>', '<?php echo $employee['status']; ?>')">
                                                 <i class="fas fa-edit"></i>
                                             </button>
                                             <button class="btn-icon btn-delete" title="Delete Employee" 
@@ -342,7 +346,12 @@ require_once 'include/sidebar.php';
 
 <!-- Edit Employee Modal -->
 <div id="editModal" class="modal">
-    <div class="modal-content">
+    <div class="modal-content" style="position: relative;">
+        <!-- Loading Overlay -->
+        <div id="editModalOverlay" class="modal-loading-overlay">
+            <div class="spinner"></div>
+            <span class="loading-text">Updating employee...</span>
+        </div>
         <div class="modal-header">
             <h2 class="modal-title">
                 <i class="fas fa-edit"></i> Edit Employee
@@ -378,10 +387,13 @@ require_once 'include/sidebar.php';
                     </div>
                     
                     <div class="form-group">
-                        <label for="edit_department" class="form-label">
-                            <i class="fas fa-building"></i> Department
+                        <label for="edit_classification" class="form-label">
+                            <i class="fas fa-tags"></i> Employee Classification
                         </label>
-                        <input type="text" id="edit_department" name="department" class="form-input">
+                        <select id="edit_classification" name="classification" class="form-input">
+                            <option value="Fix Rate">Fix Rate</option>
+                            <option value="Trainer">Trainer</option>
+                        </select>
                     </div>
                     
                     <div class="form-group">
@@ -480,6 +492,32 @@ require_once 'include/sidebar.php';
     cursor: not-allowed;
     pointer-events: none;
 }
+
+/* Center Delete Confirmation Modal */
+#deleteConfirmModal.modal {
+    position: fixed;
+    inset: 0; /* top:0; right:0; bottom:0; left:0; */
+    display: none; /* JS will set to 'flex' when opened */
+    align-items: center;
+    justify-content: center;
+    background: rgba(0,0,0,0.45);
+    z-index: 1050;
+    padding: 20px;
+}
+.delete-modal-content {
+    background: #ffffff;
+    border-radius: 10px;
+    width: 520px;
+    max-width: calc(100% - 40px);
+    box-shadow: 0 20px 40px rgba(2,6,23,0.12);
+    overflow: hidden;
+}
+.delete-modal-body { padding: 28px; text-align: center; }
+.delete-warning-icon { font-size: 40px; color: #f59e0b; margin-bottom: 8px; }
+.delete-modal-title { margin: 0 0 8px 0; font-size: 20px; }
+.delete-modal-message { margin: 0 0 6px 0; }
+.delete-modal-warning { color: #6b7280; font-size: 13px; margin-top: 8px; }
+.delete-modal-footer { display:flex; gap:12px; justify-content:center; padding: 16px 24px 22px; }
 
 /* Modern Flat Design - Employee List */
 .main-content {
@@ -905,6 +943,8 @@ require_once 'include/sidebar.php';
     background-color: rgba(0, 0, 0, 0.5);
     backdrop-filter: blur(4px);
     animation: fadeIn 0.3s ease;
+    align-items: center;
+    justify-content: center;
 }
 
 @keyframes fadeIn {
@@ -1119,6 +1159,49 @@ require_once 'include/sidebar.php';
         grid-column: span 1;
     }
 }
+
+/* Modal Loading Overlay */
+.modal-loading-overlay {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(2px);
+    z-index: 10;
+    border-radius: 12px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+}
+
+.modal-loading-overlay.active {
+    display: flex;
+}
+
+.modal-loading-overlay .spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid #E5E7EB;
+    border-top: 4px solid #2563EB;
+    border-radius: 50%;
+    animation: overlaySpinner 0.8s linear infinite;
+}
+
+.modal-loading-overlay .loading-text {
+    font-size: 15px;
+    font-weight: 600;
+    color: #374151;
+    letter-spacing: 0.3px;
+}
+
+@keyframes overlaySpinner {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
 </style>
 
 <script>
@@ -1223,7 +1306,7 @@ function confirmDelete(employeeId, employeeName) {
     pendingDeleteId = employeeId;
     pendingDeleteName = employeeName;
     document.getElementById('deleteEmployeeNameDisplay').textContent = employeeName;
-    document.getElementById('deleteConfirmModal').style.display = 'block';
+    document.getElementById('deleteConfirmModal').style.display = 'flex';
     document.body.style.overflow = 'hidden';
 }
 
@@ -1233,6 +1316,12 @@ function closeDeleteModal() {
     document.body.style.overflow = 'auto';
     pendingDeleteId = null;
     pendingDeleteName = null;
+    // Always reset the delete button so it's ready for the next use
+    const deleteBtn = document.querySelector('#deleteConfirmModal .btn-danger');
+    if (deleteBtn) {
+        deleteBtn.disabled = false;
+        deleteBtn.innerHTML = '<i class="fas fa-check"></i> Confirm';
+    }
 }
 
 // Confirm delete action
@@ -1240,6 +1329,10 @@ function confirmDeleteAction() {
     if (!pendingDeleteId) return;
     
     const employeeId = pendingDeleteId;
+
+    // S5: Disable delete button during operation
+    const deleteBtn = document.querySelector('#deleteConfirmModal .btn-danger');
+    if (deleteBtn) { deleteBtn.disabled = true; deleteBtn.textContent = 'Deleting...'; }
     
     // Perform AJAX POST to delete endpoint
     fetch('delete_employee.php', {
@@ -1265,6 +1358,7 @@ function confirmDeleteAction() {
         console.error(err);
         closeDeleteModal();
         showNotification('An error occurred while deleting.', 'error');
+        if (deleteBtn) { deleteBtn.disabled = false; deleteBtn.textContent = 'Delete'; }
     });
 }
 
@@ -1316,14 +1410,14 @@ function checkEditChanges() {
     const code = document.getElementById('edit_employee_code').value.trim();
     const name = document.getElementById('edit_full_name').value.trim();
     const position = document.getElementById('edit_position').value.trim();
-    const department = document.getElementById('edit_department').value.trim();
+    const classification = document.getElementById('edit_classification').value;
     const salary = document.getElementById('edit_basic_salary').value;
     const hireDate = document.getElementById('edit_hire_date').value;
     const status = document.getElementById('edit_status').value;
     const changed = (code !== editOriginalValues.code ||
                      name !== editOriginalValues.name ||
                      position !== editOriginalValues.position ||
-                     department !== editOriginalValues.department ||
+                     classification !== editOriginalValues.classification ||
                      salary !== editOriginalValues.salary ||
                      hireDate !== editOriginalValues.hireDate ||
                      status !== editOriginalValues.status);
@@ -1332,7 +1426,7 @@ function checkEditChanges() {
     return changed;
 }
 
-['edit_employee_code', 'edit_full_name', 'edit_position', 'edit_department', 'edit_basic_salary', 'edit_hire_date', 'edit_status'].forEach(function(id) {
+['edit_employee_code', 'edit_full_name', 'edit_position', 'edit_classification', 'edit_basic_salary', 'edit_hire_date', 'edit_status'].forEach(function(id) {
     const el = document.getElementById(id);
     if (el) {
         el.addEventListener('input', checkEditChanges);
@@ -1364,19 +1458,19 @@ document.getElementById('edit_basic_salary').addEventListener('input', function(
 });
 
 // Open Edit Modal
-function openEditModal(id, code, name, position, department, salary, hireDate, status) {
-    editOriginalValues = { code: code, name: name, position: position, department: department, salary: String(salary), hireDate: hireDate, status: status };
+function openEditModal(id, code, name, position, classification, salary, hireDate, status) {
+    editOriginalValues = { code: code, name: name, position: position, classification: classification, salary: String(salary), hireDate: hireDate, status: status };
     document.getElementById('edit_employee_id').value = id;
     document.getElementById('edit_employee_code').value = code;
     document.getElementById('edit_full_name').value = name;
     document.getElementById('edit_position').value = position;
-    document.getElementById('edit_department').value = department;
+    document.getElementById('edit_classification').value = classification;
     document.getElementById('edit_basic_salary').value = salary;
     document.getElementById('edit_hire_date').value = hireDate;
     document.getElementById('edit_status').value = status;
     
     // Clear any previous field errors and reset button state
-    ['edit_employee_code', 'edit_full_name', 'edit_position', 'edit_department', 'edit_basic_salary', 'edit_hire_date'].forEach(function(fid) {
+    ['edit_employee_code', 'edit_full_name', 'edit_position', 'edit_classification', 'edit_basic_salary', 'edit_hire_date'].forEach(function(fid) {
         clearEditFieldError(fid);
         const inp = document.getElementById(fid);
         if (inp) inp.classList.remove('input-success', 'input-error');
@@ -1385,6 +1479,11 @@ function openEditModal(id, code, name, position, department, salary, hireDate, s
     
     document.getElementById('editModal').style.display = 'block';
     document.body.style.overflow = 'hidden';
+
+    // Re-evaluate button state in case displayed value differs from stored original
+    // (e.g. DB has 'N/A' classification which isn't a valid option so the select
+    //  snaps to the first option, creating an immediate detectable change)
+    checkEditChanges();
 }
 
 // Close Edit Modal
@@ -1434,23 +1533,98 @@ function updateEmployee(event) {
     submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Updating...';
     submitBtn.disabled = true;
     
+    // Show modal loading overlay
+    const overlay = document.getElementById('editModalOverlay');
+    overlay.classList.add('active');
+    
     fetch('employee_list.php', {
         method: 'POST',
         body: formData
     })
     .then(response => response.json())
     .then(data => {
+        // Hide overlay
+        overlay.classList.remove('active');
+        
         if (data.success) {
+            // Capture updated values BEFORE closeEditModal() resets the form
+            const employeeId      = document.getElementById('edit_employee_id').value;
+            const newCode         = document.getElementById('edit_employee_code').value.trim();
+            const newName         = document.getElementById('edit_full_name').value.trim();
+            const newPosition     = document.getElementById('edit_position').value.trim();
+            const newClassification = document.getElementById('edit_classification').value;
+            const newSalary       = parseFloat(document.getElementById('edit_basic_salary').value);
+            const newHireDate     = document.getElementById('edit_hire_date').value;
+            const newStatus       = document.getElementById('edit_status').value;
+
+            // Restore button to original state before closing
+            submitBtn.innerHTML = originalText;
+            submitBtn.disabled = true; // keep disabled (no changes after close)
+
             // Show success message
             showNotification(data.message, 'success');
-            
-            // Close modal
+
+            // Close modal (resets the form)
             closeEditModal();
-            
-            // Reload page to show updated data
-            setTimeout(() => {
-                window.location.reload();
-            }, 1000);
+
+            // Update the table row directly without a page reload
+            const row = document.querySelector('tr[data-employee-id="' + employeeId + '"]');
+            if (row) {
+                const cells = row.querySelectorAll('td');
+
+                // Employee Code
+                const codeEl = cells[0].querySelector('.employee-code');
+                if (codeEl) codeEl.textContent = newCode;
+
+                // Full Name
+                const nameEl = cells[1].querySelector('.employee-name');
+                if (nameEl) nameEl.textContent = newName;
+
+                // Position
+                cells[2].textContent = newPosition || 'N/A';
+
+                // Employee Classification
+                cells[3].textContent = newClassification || 'N/A';
+
+                // Monthly Salary
+                const salaryEl = cells[4].querySelector('.salary-amount');
+                if (salaryEl) salaryEl.textContent = '\u20b1' + newSalary.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+                // Hire Date
+                if (newHireDate) {
+                    const d = new Date(newHireDate + 'T00:00:00');
+                    cells[5].textContent = d.toLocaleDateString('en-US', { month: 'short', day: '2-digit', year: 'numeric' });
+                } else {
+                    cells[5].textContent = 'N/A';
+                }
+
+                // Status Badge
+                const statusMap = {
+                    active:     { cls: 'badge-success',   icon: 'fa-check-circle' },
+                    inactive:   { cls: 'badge-secondary', icon: 'fa-pause-circle' },
+                    resigned:   { cls: 'badge-warning',   icon: 'fa-user-times' },
+                    terminated: { cls: 'badge-danger',    icon: 'fa-ban' }
+                };
+                const statusInfo = statusMap[newStatus] || { cls: 'badge-secondary', icon: 'fa-question-circle' };
+                const badgeEl = cells[6].querySelector('.badge');
+                if (badgeEl) {
+                    badgeEl.className = 'badge ' + statusInfo.cls;
+                    badgeEl.innerHTML = '<i class="fas ' + statusInfo.icon + '"></i> ' + newStatus.charAt(0).toUpperCase() + newStatus.slice(1);
+                }
+                row.setAttribute('data-status', newStatus);
+
+                // Update the edit button onclick so re-opening shows fresh values
+                const editBtn = row.querySelector('.btn-edit');
+                if (editBtn) {
+                    const safeCode  = newCode.replace(/'/g, "\\'");
+                    const safeName  = newName.replace(/'/g, "\\'");
+                    const safePos   = newPosition.replace(/'/g, "\\'");
+                    const safeClassif = newClassification.replace(/'/g, "\\'");
+                    editBtn.setAttribute('onclick',
+                        `openEditModal(${employeeId}, '${safeCode}', '${safeName}', '${safePos}', '${safeClassif}', ${newSalary}, '${newHireDate}', '${newStatus}')`
+                    );
+                }
+            }
         } else {
             // Show error message
             showNotification(data.message, 'error');
@@ -1461,6 +1635,9 @@ function updateEmployee(event) {
         }
     })
     .catch(error => {
+        // Hide overlay
+        overlay.classList.remove('active');
+        
         console.error('Error:', error);
         showNotification('An error occurred. Please try again.', 'error');
         
@@ -1555,7 +1732,7 @@ function showNotification(message, type) {
 /* Delete Confirmation Modal Styles */
 .delete-modal-content {
     background-color: #FFFFFF;
-    margin: 5% auto;
+    margin: 0;
     border-radius: 12px;
     width: 90%;
     max-width: 500px;

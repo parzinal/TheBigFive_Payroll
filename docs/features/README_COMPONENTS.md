@@ -199,7 +199,7 @@ Each role has different menu items tailored to their permissions:
 
 ## Notes
 
-- The sidebar state is saved per browser/device using localStorage
-- Session validation is performed on every page load
-- All file paths are relative to the role directory (admin/, staff/, user/)
-- Make sure to set `$page_title` before including the header for custom page titles
+- The sidebar uses CSS transitions for smooth animations
+- localStorage key: `sidebarCollapsed` (boolean)
+- Mobile breakpoint: 768px
+- The components are designed to work independently - no external CSS framework required

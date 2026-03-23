@@ -11,7 +11,6 @@ require_once '../config/database.php';
 
 $pdo = getDBConnection();
 
-// Get all employees with payroll computations grouped
 $stmt = $pdo->query("
     SELECT 
         e.id,
@@ -26,6 +25,11 @@ $stmt = $pdo->query("
     FROM employees e
     INNER JOIN payroll_computations pc ON e.id = pc.employee_id
     WHERE pc.status IN ('computed', 'approved', 'paid')
+    -- Include rows explicitly marked as cutoff OR rows updated to indicate a generated payslip
+    AND (
+        pc.other_deductions_notes LIKE '%\"cutoff_type\"%'
+        OR pc.other_deductions_notes LIKE '%\"payslip_generated\"%'
+    )
     GROUP BY e.id, e.employee_code, e.full_name, e.position, e.department, e.basic_monthly_salary
     ORDER BY MAX(pc.created_at) DESC
 ");
@@ -528,6 +532,84 @@ $total_amount = array_sum(array_column($employees, 'total_net_pay'));
     overflow-y: auto;
 }
 
+/* Cutoff Filter Bar */
+.payslip-filter-bar {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    padding: 14px 18px;
+    background: #f1f5f9;
+    border-radius: 10px;
+    margin-bottom: 20px;
+    flex-wrap: wrap;
+}
+.payslip-filter-bar label {
+    font-size: 13px;
+    font-weight: 600;
+    color: #475569;
+    white-space: nowrap;
+}
+.payslip-filter-bar select {
+    padding: 8px 14px;
+    border: 2px solid #e2e8f0;
+    border-radius: 8px;
+    font-size: 13px;
+    color: #1e293b;
+    background: #fff;
+    cursor: pointer;
+    transition: border-color 0.2s;
+    min-width: 130px;
+}
+.payslip-filter-bar select:focus {
+    outline: none;
+    border-color: #2563EB;
+}
+.payslip-filter-bar .filter-divider {
+    width: 1px;
+    height: 28px;
+    background: #cbd5e1;
+}
+.btn-filter-reset {
+    padding: 8px 16px;
+    background: #e2e8f0;
+    color: #475569;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    transition: all 0.2s;
+    white-space: nowrap;
+}
+.btn-filter-reset:hover {
+    background: #cbd5e1;
+    color: #1e293b;
+}
+.filter-result-count {
+    margin-left: auto;
+    font-size: 12px;
+    color: #64748b;
+    font-weight: 500;
+}
+.payslip-list-item.hidden-by-filter {
+    display: none;
+}
+.no-filter-results {
+    text-align: center;
+    padding: 40px 20px;
+    color: #94a3b8;
+    font-size: 15px;
+}
+.no-filter-results i {
+    font-size: 36px;
+    display: block;
+    margin-bottom: 12px;
+    color: #cbd5e1;
+}
+
 .loading-spinner {
     text-align: center;
     padding: 60px 20px;
@@ -574,6 +656,35 @@ $total_amount = array_sum(array_column($employees, 'total_net_pay'));
     font-weight: 600;
     color: #1e293b;
     margin: 0 0 8px 0;
+    display: flex;
+    align-items: center;
+    gap: 10px;
+    flex-wrap: wrap;
+}
+
+/* Cut-off badges */
+.cutoff-badge {
+    display: inline-flex;
+    align-items: center;
+    gap: 5px;
+    padding: 3px 10px;
+    border-radius: 20px;
+    font-size: 11px;
+    font-weight: 700;
+    letter-spacing: 0.4px;
+    text-transform: uppercase;
+    white-space: nowrap;
+    flex-shrink: 0;
+}
+.cutoff-badge.first {
+    background: #dbeafe;
+    color: #1d4ed8;
+    border: 1.5px solid #93c5fd;
+}
+.cutoff-badge.second {
+    background: #fef3c7;
+    color: #b45309;
+    border: 1.5px solid #fcd34d;
 }
 
 .payslip-list-meta {
@@ -621,6 +732,31 @@ $total_amount = array_sum(array_column($employees, 'total_net_pay'));
     box-shadow: 0 6px 16px rgba(37, 99, 235, 0.3);
 }
 
+.btn-download-pdf {
+    padding: 10px 20px;
+    background: linear-gradient(135deg, #dc2626 0%, #b91c1c 100%);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    transition: all 0.3s ease;
+    white-space: nowrap;
+    text-decoration: none;
+}
+
+.btn-download-pdf:hover {
+    background: linear-gradient(135deg, #b91c1c 0%, #991b1b 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 16px rgba(220, 38, 38, 0.3);
+    color: white;
+    text-decoration: none;
+}
+
 /* Receipt Modal */
 .modal-receipt {
     display: none;
@@ -656,8 +792,8 @@ $total_amount = array_sum(array_column($employees, 'total_net_pay'));
     background: white;
     border-radius: 12px;
     box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
-    max-width: 480px;
-    width: 100%;
+    max-width: 960px;
+    width: 95vw;
     max-height: 90vh;
     overflow-y: auto;
 }
@@ -819,39 +955,7 @@ $total_amount = array_sum(array_column($employees, 'total_net_pay'));
     line-height: 1.5;
 }
 
-.receipt-barcode {
-    margin-top: 15px;
-    padding-top: 15px;
-    border-top: 1px dashed #e2e8f0;
-}
 
-.receipt-barcode-lines {
-    display: flex;
-    justify-content: center;
-    gap: 2px;
-    margin-bottom: 8px;
-}
-
-.barcode-line {
-    width: 2px;
-    height: 40px;
-    background: #1e293b;
-}
-
-.barcode-line:nth-child(2n) {
-    width: 1px;
-}
-
-.barcode-line:nth-child(3n) {
-    width: 3px;
-}
-
-.receipt-barcode-text {
-    text-align: center;
-    font-size: 10px;
-    color: #94a3b8;
-    letter-spacing: 2px;
-}
 
 /* Responsive */
 @media (max-width: 768px) {
@@ -907,49 +1011,30 @@ function viewEmployeePayslips(employeeId, employeeName) {
     const modal = document.getElementById('payslipsListModal');
     const modalTitle = document.getElementById('modalEmployeeName');
     const container = document.getElementById('payslipsListContainer');
-    
+
     modalTitle.textContent = employeeName + ' - Payslips';
     modal.classList.add('active');
-    
+
     // Show loading
     container.innerHTML = '<div class="loading-spinner"><i class="fas fa-spinner fa-spin"></i> Loading payslips...</div>';
-    
+
     // Fetch payslips
     fetch(`get_employee_payslips.php?employee_id=${employeeId}`)
-        .then(response => response.json())
-        .then(data => {
-            if (data.success && data.payslips.length > 0) {
-                let html = '<div class="payslip-list-grid">';
-                
-                data.payslips.forEach((payslip, index) => {
-                    html += `
-                        <div class="payslip-list-item">
-                            <div class="payslip-list-info">
-                                <h4 class="payslip-list-period">${payslip.period_name}</h4>
-                                <div class="payslip-list-meta">
-                                    <div class="payslip-list-meta-item">
-                                        <i class="fas fa-calendar"></i>
-                                        Generated: ${formatDate(payslip.created_at)}
-                                    </div>
-                                    <div class="payslip-list-meta-item">
-                                        <i class="fas fa-money-bill-wave"></i>
-                                        Net Pay: <strong>₱${parseFloat(payslip.net_pay || 0).toFixed(2)}</strong>
-                                    </div>
-                                    <div class="payslip-list-meta-item">
-                                        <i class="fas fa-info-circle"></i>
-                                        Status: <strong>${payslip.status.toUpperCase()}</strong>
-                                    </div>
-                                </div>
-                            </div>
-                            <button class="btn-view-payslip" onclick='viewPayslipReceipt(${JSON.stringify(payslip).replace(/'/g, "&apos;")})'>
-                                <i class="fas fa-receipt"></i> View Payslip
-                            </button>
-                        </div>
-                    `;
-                });
-                
-                html += '</div>';
-                container.innerHTML = html;
+        .then(response => {
+            if (!response.ok) throw new Error('HTTP ' + response.status);
+            return response.text();
+        })
+        .then(text => {
+            let data;
+            try {
+                data = JSON.parse(text);
+            } catch(e) {
+                console.error('JSON parse error. Raw response:', text);
+                throw new Error('Invalid server response');
+            }
+
+            if (data.success && data.payslips && data.payslips.length > 0) {
+                renderPayslipList(data.payslips, container);
             } else {
                 container.innerHTML = `
                     <div class="loading-spinner">
@@ -960,14 +1045,126 @@ function viewEmployeePayslips(employeeId, employeeName) {
             }
         })
         .catch(error => {
-            console.error('Error:', error);
+            console.error('Error loading payslips:', error);
             container.innerHTML = `
                 <div class="loading-spinner">
-                    <i class="fas fa-exclamation-triangle"></i>
+                    <i class="fas fa-exclamation-triangle" style="color:#ef4444;"></i>
                     <p>Error loading payslips. Please try again.</p>
+                    <small style="color:#94a3b8;">${error.message}</small>
                 </div>
             `;
         });
+}
+
+// Render the payslip list inside the modal container
+function renderPayslipList(payslips, container) {
+    // ── Build YYYY-MM values for the month date-picker ──
+    const monthSet = new Set();
+    payslips.forEach(p => {
+        if (p.start_date) {
+            const d = new Date(p.start_date);
+            const ym = d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0');
+            monthSet.add(ym);
+        }
+    });
+    const sortedMonths = [...monthSet].sort((a, b) => b.localeCompare(a));
+
+    // ── Filter bar with month date-picker ──
+    let monthOptions = '<option value="">All Periods</option>';
+    sortedMonths.forEach(ym => {
+        const [yr, mo] = ym.split('-');
+        const label = new Date(yr, mo - 1).toLocaleDateString('en-US', { month: 'long', year: 'numeric' });
+        monthOptions += `<option value="${ym}">${label}</option>`;
+    });
+
+    let html = `
+    <div class="payslip-filter-bar">
+        <i class="fas fa-calendar-alt" style="color:#2563EB;"></i>
+        <label for="filterMonthPicker">Filter by Period:</label>
+        <select id="filterMonthPicker" onchange="applyPayslipFilter()">${monthOptions}</select>
+        <div class="filter-divider"></div>
+        <label style="font-size:13px;font-weight:600;color:#475569;">Cut-off:</label>
+        <select id="filterCutoff" onchange="applyPayslipFilter()">
+            <option value="">All</option>
+            <option value="1st">1st Cut-off (1–15)</option>
+            <option value="2nd">2nd Cut-off (16–31)</option>
+        </select>
+        <div class="filter-divider"></div>
+        <button class="btn-filter-reset" onclick="resetPayslipFilter()">
+            <i class="fas fa-times"></i> Reset
+        </button>
+        <span class="filter-result-count" id="filterResultCount"></span>
+    </div>`;
+
+    html += '<div class="payslip-list-grid" id="payslipListGrid">';
+
+    payslips.forEach(payslip => {
+        // Determine cut-off from start_date day
+        const startDay   = payslip.start_date ? new Date(payslip.start_date).getDate() : 0;
+        const isFirst    = startDay <= 15;
+        const cutoffLabel = isFirst ? '1st Cut-off' : '2nd Cut-off';
+        const cutoffKey   = isFirst ? '1st' : '2nd';
+        const badgeClass  = isFirst ? 'first' : 'second';
+        const cutoffRange = isFirst ? '1st – 15th' : '16th – 31st';
+
+        // YYYY-MM for data attribute filtering
+        const ym = payslip.start_date
+            ? payslip.start_date.substring(0, 7)   // "2026-03"
+            : '';
+
+        // Period label: use period_name if available, else derive from start_date
+        const periodLabel = payslip.period_name || formatShortDate(payslip.start_date);
+
+        // Net pay formatted
+        const netPay = parseFloat(payslip.net_pay || 0);
+        const netPayFmt = '₱' + netPay.toLocaleString('en-PH', {minimumFractionDigits: 2});
+
+        html += `
+        <div class="payslip-list-item" data-ym="${ym}" data-cutoff="${cutoffKey}">
+            <div class="payslip-list-info">
+                <h4 class="payslip-list-period">
+                    <span class="cutoff-badge ${badgeClass}" style="font-size:13px;padding:5px 14px;border-radius:8px;">
+                        ${isFirst
+                            ? '<i class="fas fa-1" style="font-style:normal;font-weight:900;">1</i>'
+                            : '<i class="fas fa-2" style="font-style:normal;font-weight:900;">2</i>'}
+                        &nbsp;${cutoffLabel}
+                        <span style="opacity:0.75;font-weight:500;font-size:10px;margin-left:4px;">(${cutoffRange})</span>
+                    </span>
+                    <span style="color:#1e293b;font-weight:700;">${periodLabel}</span>
+                </h4>
+                <div class="payslip-list-meta">
+                    <div class="payslip-list-meta-item">
+                        <i class="fas fa-calendar-check"></i>
+                        Period: <strong>${formatShortDate(payslip.start_date)} – ${formatShortDate(payslip.end_date)}</strong>
+                    </div>
+                    <div class="payslip-list-meta-item">
+                        <i class="fas fa-clock"></i>
+                        Generated: <strong>${formatDate(payslip.created_at)}</strong>
+                    </div>
+                    <div class="payslip-list-meta-item">
+                        <i class="fas fa-money-bill-wave"></i>
+                        Net Pay: <strong style="color:#059669;font-size:15px;">${netPayFmt}</strong>
+                    </div>
+                    <div class="payslip-list-meta-item">
+                        <i class="fas fa-check-circle" style="color:#2563EB;"></i>
+                        Status: <strong>${payslip.status.toUpperCase()}</strong>
+                    </div>
+                </div>
+            </div>
+            <div style="display:flex;gap:8px;flex-direction:column;align-items:stretch;min-width:140px;">
+                <button class="btn-view-payslip" onclick='viewPayslipReceipt(${JSON.stringify(payslip).replace(/'/g, "&#39;")})'>
+                    <i class="fas fa-eye"></i> View Payslip
+                </button>
+                <a class="btn-download-pdf" href="generate_payslip_pdf.php?payslip_id=${payslip.id}" target="_blank">
+                    <i class="fas fa-file-pdf"></i> Download PDF
+                </a>
+            </div>
+        </div>`;
+    });
+
+    html += '</div>';
+    container.innerHTML = html;
+    updateFilterCount();
 }
 
 // Show single payslip in receipt format
@@ -991,6 +1188,58 @@ function closePayslipReceiptModal() {
     modal.classList.remove('active');
 }
 
+// ── Payslip cutoff filters ──────────────────────────────────────────────────
+function applyPayslipFilter() {
+    const ym      = document.getElementById('filterMonthPicker')?.value || '';
+    const cutoff  = document.getElementById('filterCutoff')?.value || '';
+    const items   = document.querySelectorAll('#payslipListGrid .payslip-list-item');
+
+    items.forEach(item => {
+        const matchYM     = !ym     || item.dataset.ym     === ym;
+        const matchCutoff = !cutoff || item.dataset.cutoff === cutoff;
+        item.classList.toggle('hidden-by-filter', !(matchYM && matchCutoff));
+    });
+
+    updateFilterCount();
+}
+
+function resetPayslipFilter() {
+    const monthSel  = document.getElementById('filterMonthPicker');
+    const cutoffSel = document.getElementById('filterCutoff');
+    if (monthSel)  monthSel.value  = '';
+    if (cutoffSel) cutoffSel.value = '';
+    applyPayslipFilter();
+}
+
+function updateFilterCount() {
+    const all     = document.querySelectorAll('#payslipListGrid .payslip-list-item');
+    const visible = document.querySelectorAll('#payslipListGrid .payslip-list-item:not(.hidden-by-filter)');
+    const badge   = document.getElementById('filterResultCount');
+    if (badge) badge.textContent = `${visible.length} of ${all.length} payslip${all.length !== 1 ? 's' : ''}`;
+
+    // Show/hide empty state
+    let noResult = document.getElementById('noFilterResult');
+    if (visible.length === 0) {
+        if (!noResult) {
+            noResult = document.createElement('div');
+            noResult.id = 'noFilterResult';
+            noResult.className = 'no-filter-results';
+            noResult.innerHTML = '<i class="fas fa-search"></i>No payslips match the selected filter.';
+            const grid = document.getElementById('payslipListGrid');
+            if (grid) grid.after(noResult);
+        }
+    } else if (noResult) {
+        noResult.remove();
+    }
+}
+// ────────────────────────────────────────────────────────────────────────────
+
+function getCutoff(startDate) {
+    if (!startDate) return '';
+    const day = new Date(startDate).getDate();
+    return day <= 15 ? '1st Cut-off' : '2nd Cut-off';
+}
+
 function formatDate(dateString) {
     const date = new Date(dateString);
     return date.toLocaleDateString('en-US', { year: 'numeric', month: 'long', day: 'numeric' });
@@ -1002,181 +1251,235 @@ function formatShortDate(dateString) {
     return date.toLocaleDateString('en-US', { month: 'short', day: 'numeric', year: 'numeric' });
 }
 
-// Generate receipt-style HTML
+// Generate TB5-style payslip HTML
 function generateReceiptHTML(payslip) {
-    const receiptId = `PSL-${payslip.id}-${new Date(payslip.created_at).getTime()}`;
-    
+    // Parse other_deductions_notes JSON
+    let notes = {};
+    try { notes = JSON.parse(payslip.other_deductions_notes || '{}'); } catch(e) {}
+    const dtr = notes.dtr_data || {};
+
+    // Earnings
+    const regularPay  = parseFloat(payslip.basic_pay   || 0);
+    const otPay       = parseFloat(payslip.ot_pay       || 0);
+    const otHours     = parseFloat(payslip.total_ot_hours  || 0);
+    const workHours   = parseFloat(payslip.total_work_hours || 0);
+    const incentive   = parseFloat(notes.commission   || 0);
+    const paidLeaves  = parseFloat(notes.sick_pay      || 0);
+    const holidayPay  = parseFloat(notes.holiday_pay   || 0);
+    const othersAdj   = parseFloat(notes.expense       || 0);
+    const trainingPay = parseFloat(payslip.trainings_cost || payslip.training_amount || notes.training_pay || 0);
+    const debugTrainingRaw = `${payslip.trainings_cost ?? ''} | ${payslip.training_amount ?? ''} | ${notes.training_pay ?? ''}`;
+
+    // Deductions
+    const whTax      = parseFloat(payslip.withholding_tax          || 0);
+    const sss        = parseFloat(payslip.sss_contribution         || 0);
+    const philhealth = parseFloat(payslip.philhealth_contribution  || 0);
+    const pagibig    = parseFloat(payslip.pagibig_contribution     || 0);
+    const tardiness  = (parseFloat(dtr.late_deduct      || 0)
+                      + parseFloat(dtr.undertime_deduct || 0)
+                      + parseFloat(dtr.halfday_deduct   || 0)
+                      + parseFloat(dtr.absent_deduct    || 0));
+    const loan       = (parseFloat(notes.student_loan || 0)
+                      + parseFloat(notes.union_fees   || 0)
+                      + parseFloat(notes.pension      || 0));
+    const othersCa   = (parseFloat(notes.other_deductions || 0)
+                      + parseFloat(payslip.other_deductions || 0));
+
+    const grossPay    = parseFloat(payslip.total_earnings    || 0);
+    const totalDeduct = parseFloat(payslip.total_deductions  || 0);
+    const netPay      = parseFloat(payslip.net_pay           || 0);
+    const otMinutes   = Math.round(otHours * 60);
+
+    // Cut-off helpers
+    const startDay    = payslip.start_date ? new Date(payslip.start_date).getDate() : 0;
+    const isFirstCut  = startDay <= 15;
+    const cutoffStr   = isFirstCut ? '1st CUT OFF (1st - 15th)' : '2nd CUT OFF (16th / 31st)';
+    const cutoffClass = isFirstCut ? 'tb5-pill-amber' : 'tb5-pill-rose';
+    const payDateFmt  = payslip.pay_date
+        ? new Date(payslip.pay_date).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})
+        : new Date(payslip.created_at).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
+
+    const fmt = v => parseFloat(v).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+    const amtCell = v => v > 0 ? `<span style="font-weight:700;color:#0f3460;">P ${fmt(v)}</span>` : `<span style="color:#94a3b8;">&mdash;</span>`;
+    const dedCell = v => v > 0 ? `<span style="font-weight:700;color:#dc2626;">P ${fmt(v)}</span>` : `<span style="color:#94a3b8;">&mdash;</span>`;
+
     return `
-        <div class="receipt-payslip">
-            <!-- Header -->
-            <div class="receipt-header">
-                <h1 class="receipt-company">TheBigFive</h1>
-                <p class="receipt-title">Payroll Receipt</p>
-            </div>
-            
-            <!-- Employee Info -->
-            <div class="receipt-section">
-                <div class="receipt-label">Employee Information</div>
-                <div class="receipt-info">
-                    <div class="receipt-info-row">
-                        <span class="receipt-info-label">Name:</span>
-                        <span class="receipt-info-value">${payslip.employee_name}</span>
-                    </div>
-                    <div class="receipt-info-row">
-                        <span class="receipt-info-label">ID:</span>
-                        <span class="receipt-info-value">${payslip.employee_code}</span>
-                    </div>
-                    <div class="receipt-info-row">
-                        <span class="receipt-info-label">Position:</span>
-                        <span class="receipt-info-value">${payslip.position || 'N/A'}</span>
-                    </div>
-                </div>
-            </div>
-            
-            <!-- Pay Period -->
-            <div class="receipt-section">
-                <div class="receipt-label">Pay Period</div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Period:</span>
-                    <span class="receipt-row-value">${payslip.period_name}</span>
-                </div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">From - To:</span>
-                    <span class="receipt-row-value">${formatShortDate(payslip.start_date)} - ${formatShortDate(payslip.end_date)}</span>
-                </div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Pay Date:</span>
-                    <span class="receipt-row-value">${formatShortDate(payslip.pay_date)}</span>
-                </div>
-            </div>
-            
-            <!-- Work Summary -->
-            <div class="receipt-section">
-                <div class="receipt-label">Work Summary</div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Days Worked:</span>
-                    <span class="receipt-row-value">${parseFloat(payslip.total_work_days || 0).toFixed(2)}</span>
-                </div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Hours Worked:</span>
-                    <span class="receipt-row-value">${parseFloat(payslip.total_work_hours || 0).toFixed(2)} hrs</span>
-                </div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Overtime Hours:</span>
-                    <span class="receipt-row-value">${parseFloat(payslip.total_ot_hours || 0).toFixed(2)} hrs</span>
-                </div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Late Hours:</span>
-                    <span class="receipt-row-value">${parseFloat(payslip.total_late_hours || 0).toFixed(2)} hrs</span>
-                </div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Absences:</span>
-                    <span class="receipt-row-value">${parseFloat(payslip.total_absent_days || 0).toFixed(2)} days</span>
-                </div>
-            </div>
-            
-            <!-- Earnings -->
-            <div class="receipt-section">
-                <div class="receipt-label">Earnings</div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Basic Pay:</span>
-                    <span class="receipt-row-value">₱${parseFloat(payslip.basic_pay || 0).toFixed(2)}</span>
-                </div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Overtime Pay:</span>
-                    <span class="receipt-row-value">₱${parseFloat(payslip.ot_pay || 0).toFixed(2)}</span>
-                </div>
-                <hr class="receipt-divider">
-                <div class="receipt-row" style="font-weight: 700;">
-                    <span class="receipt-row-label">TOTAL EARNINGS:</span>
-                    <span class="receipt-row-value">₱${parseFloat(payslip.total_earnings || 0).toFixed(2)}</span>
-                </div>
-            </div>
-            
-            <!-- Deductions -->
-            <div class="receipt-section">
-                <div class="receipt-label">Deductions</div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Late Deduction:</span>
-                    <span class="receipt-row-value">₱${parseFloat(payslip.late_deduction || 0).toFixed(2)}</span>
-                </div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Undertime:</span>
-                    <span class="receipt-row-value">₱${parseFloat(payslip.undertime_deduction || 0).toFixed(2)}</span>
-                </div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Absences:</span>
-                    <span class="receipt-row-value">₱${parseFloat(payslip.absent_deduction || 0).toFixed(2)}</span>
-                </div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">SSS:</span>
-                    <span class="receipt-row-value">₱${parseFloat(payslip.sss_contribution || 0).toFixed(2)}</span>
-                </div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">PhilHealth:</span>
-                    <span class="receipt-row-value">₱${parseFloat(payslip.philhealth_contribution || 0).toFixed(2)}</span>
-                </div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Pag-IBIG:</span>
-                    <span class="receipt-row-value">₱${parseFloat(payslip.pagibig_contribution || 0).toFixed(2)}</span>
-                </div>
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Withholding Tax:</span>
-                    <span class="receipt-row-value">₱${parseFloat(payslip.withholding_tax || 0).toFixed(2)}</span>
-                </div>
-                ${parseFloat(payslip.cash_advance || 0) > 0 ? `
-                <div class="receipt-row">
-                    <span class="receipt-row-label">Cash Advance:</span>
-                    <span class="receipt-row-value">₱${parseFloat(payslip.cash_advance || 0).toFixed(2)}</span>
-                </div>
-                ` : ''}
-                <hr class="receipt-divider">
-                <div class="receipt-row" style="font-weight: 700;">
-                    <span class="receipt-row-label">TOTAL DEDUCTIONS:</span>
-                    <span class="receipt-row-value">₱${parseFloat(payslip.total_deductions || 0).toFixed(2)}</span>
-                </div>
-            </div>
-            
-            <!-- Net Pay -->
-            <div class="receipt-total">
-                <div>
-                    <div class="receipt-total-label">NET PAY</div>
-                    <div style="font-size: 10px; opacity: 0.8; margin-top: 2px;">Amount to Receive</div>
-                </div>
-                <div class="receipt-total-value">₱${parseFloat(payslip.net_pay || 0).toFixed(2)}</div>
-            </div>
-            
-            <!-- Footer -->
-            <div class="receipt-footer">
-                <p class="receipt-footer-text">This is a computer-generated payslip.</p>
-                <p class="receipt-footer-text">No signature required.</p>
-                <p class="receipt-footer-text" style="margin-top: 10px;">Generated: ${formatDate(payslip.created_at)}</p>
-                
-                <!-- Barcode -->
-                <div class="receipt-barcode">
-                    <div class="receipt-barcode-lines">
-                        <div class="barcode-line"></div>
-                        <div class="barcode-line"></div>
-                        <div class="barcode-line"></div>
-                        <div class="barcode-line"></div>
-                        <div class="barcode-line"></div>
-                        <div class="barcode-line"></div>
-                        <div class="barcode-line"></div>
-                        <div class="barcode-line"></div>
-                        <div class="barcode-line"></div>
-                        <div class="barcode-line"></div>
-                        <div class="barcode-line"></div>
-                        <div class="barcode-line"></div>
-                    </div>
-                    <p class="receipt-barcode-text">${receiptId}</p>
-                </div>
-                
-                <p class="receipt-footer-text" style="margin-top: 15px;">© ${new Date().getFullYear()} TheBigFive Payroll System</p>
-                <p class="receipt-footer-text">Thank you!</p>
-            </div>
+    <style>
+    .tb5-wrap { font-family: Arial, Helvetica, sans-serif; font-size: 8.5pt; color: #1e293b; }
+    .tb5-wrap table { width: 100%; border-collapse: collapse; }
+    .tb5-wrap td { vertical-align: middle; }
+    .tb5-banner { background: #0f3460; padding: 10px 14px; }
+    .tb5-co-tag { font-size: 6.5pt; color: #93c5fd; letter-spacing: 2px; text-transform: uppercase; font-weight: 700; }
+    .tb5-co-name { font-size: 14pt; font-weight: 800; color: #fff; margin-top: 2px; }
+    .tb5-badge { background: #1a56db; color: #fff; font-weight: 800; font-size: 12pt; letter-spacing: 2px; text-align: center; padding: 6px 14px; border-radius: 5px; border: 2px solid #3b82f6; }
+    .tb5-badge-sub { font-size: 6.5pt; color: #bfdbfe; font-weight: 600; letter-spacing: 1.5px; text-transform: uppercase; display: block; text-align: center; margin-top: 3px; }
+    .tb5-info-strip td { background: #e8f0fe; padding: 5px 12px; border-bottom: 1.5px solid #c7d7f9; }
+    .tb5-lbl { font-size: 6pt; font-weight: 700; color: #64748b; text-transform: uppercase; letter-spacing: 0.8px; display: block; }
+    .tb5-val { font-size: 8.5pt; font-weight: 700; color: #0f3460; display: block; margin-top: 1px; }
+    .tb5-pill-green  { background: #15803d; color: #fff; font-weight: 700; font-size: 9pt; padding: 2px 12px; border-radius: 20px; display: inline-block; }
+    .tb5-pill-amber  { background: #fef3c7; color: #92400e; font-weight: 700; font-size: 8pt; padding: 2px 10px; border-radius: 20px; border: 1px solid #fbbf24; display: inline-block; }
+    .tb5-pill-rose   { background: #fce7f3; color: #9d174d; font-weight: 700; font-size: 8pt; padding: 2px 10px; border-radius: 20px; border: 1px solid #f472b6; display: inline-block; }
+    .tb5-pill-status { background: #dcfce7; color: #15803d; font-weight: 700; font-size: 7pt; padding: 2px 8px; border-radius: 20px; border: 1px solid #86efac; text-transform: uppercase; display: inline-block; }
+    .tb5-divv { border-left: 1.5px solid #c7d7f9; }
+    .tb5-body-wrap > tbody > tr > td { vertical-align: top; padding: 0; }
+    .tb5-pane-earn { width: 38%; border-right: 1.5px solid #e2e8f0; }
+    .tb5-pane-ded  { width: 35%; border-right: 1.5px solid #e2e8f0; }
+    .tb5-pane-sum  { width: 27%; background: #f8fafc; }
+    .tb5-sec { padding: 4px 12px; font-size: 7pt; font-weight: 700; letter-spacing: 1.5px; text-transform: uppercase; color: #fff; }
+    .tb5-sec-green { background: #15803d; }
+    .tb5-sec-red   { background: #991b1b; }
+    .tb5-sec-navy  { background: #1e40af; }
+    .tb5-sub td { background: #f1f5f9; font-size: 6.5pt; font-weight: 700; color: #475569; letter-spacing: 0.8px; text-transform: uppercase; padding: 3px 12px; border-bottom: 1px solid #e2e8f0; border-top: 1px solid #e2e8f0; }
+    .tb5-sub-r { text-align: right; }
+    .tb5-dr td { font-size: 8pt; padding: 3px 12px; border-bottom: 1px solid #f1f5f9; }
+    .tb5-rl { color: #334155; font-weight: 600; }
+    .tb5-rv { text-align: right; font-weight: 700; color: #0f3460; }
+    .tb5-hr-box { margin: 6px 8px 5px; border: 1px solid #e2e8f0; border-radius: 5px; background: #fff; padding: 4px 10px; text-align: center; }
+    .tb5-hr-lbl { font-size: 6pt; font-weight: 700; color: #64748b; letter-spacing: 0.8px; text-transform: uppercase; display: block; }
+    .tb5-hv-g { color: #15803d; font-weight: 700; font-size: 9pt; padding: 1px 5px; }
+    .tb5-hv-b { color: #1a56db; font-weight: 700; font-size: 9pt; padding: 1px 5px; }
+    .tb5-hv-s { color: #cbd5e1; padding: 1px 3px; }
+    .tb5-sum td { font-size: 8.5pt; padding: 3px 12px; }
+    .tb5-sl { color: #475569; font-weight: 700; }
+    .tb5-sv  { text-align: right; font-weight: 700; color: #0f3460; border-bottom: 1px solid #e2e8f0; }
+    .tb5-svr { text-align: right; font-weight: 700; color: #dc2626; border-bottom: 1px solid #e2e8f0; }
+    .tb5-net-box { background: #0f3460; margin: 6px 8px; border-radius: 5px; padding: 8px 12px; text-align: center; }
+    .tb5-net-t { color: #93c5fd; font-size: 6pt; font-weight: 700; letter-spacing: 1px; text-transform: uppercase; display: block; }
+    .tb5-net-v { color: #fff; font-size: 15pt; font-weight: 800; display: block; margin-top: 3px; }
+    .tb5-footer { border-top: 2px solid #0f3460; }
+    .tb5-footer td { background: #f0f4ff; padding: 8px 14px; vertical-align: top; }
+    .tb5-footer-l { border-right: 1.5px solid #c7d7f9; }
+    .tb5-foot-stamp { background: #0f3460; color: #fff; font-size: 6.5pt; font-weight: 800; letter-spacing: 1px; text-transform: uppercase; padding: 2px 8px; border-radius: 3px; display: inline-block; margin-bottom: 6px; }
+    .tb5-sig-line { border-bottom: 2px solid #0f3460; display: block; width: 170px; margin-top: 18px; }
+    .tb5-sig-note { font-size: 6pt; color: #64748b; display: block; margin-top: 3px; text-align: center; width: 170px; }
+    </style>
+    <div class="tb5-wrap">
+
+    <!-- BANNER -->
+    <table>
+    <tr>
+      <td class="tb5-banner" style="width:68%;">
+        <div class="tb5-co-tag">Official Payslip Document</div>
+        <div class="tb5-co-name">The Big Five Training and Assessment Center</div>
+      </td>
+      <td class="tb5-banner" style="width:32%; border-left:1px solid #1d4ed8; text-align:center;">
+        <div class="tb5-badge">TB5 COPY</div>
+        <span class="tb5-badge-sub">Semi-Monthly Payroll</span>
+      </td>
+    </tr>
+    </table>
+
+    <!-- INFO STRIP -->
+    <table class="tb5-info-strip">
+    <tr>
+      <td style="width:36%;">
+        <span class="tb5-lbl">Employee</span>
+        <span class="tb5-pill-green">${payslip.employee_name}</span>
+      </td>
+      <td class="tb5-divv" style="width:18%;">
+        <span class="tb5-lbl">Status</span>
+        <span class="tb5-pill-status">${payslip.status}</span>
+      </td>
+      <td class="tb5-divv" style="width:28%;">
+        <span class="tb5-lbl">Cut-off Period</span>
+        <span class="${cutoffClass}">${cutoffStr}</span>
+      </td>
+      <td class="tb5-divv" style="width:18%;">
+        <span class="tb5-lbl">Pay Date</span>
+        <span class="tb5-val">${payDateFmt}</span>
+      </td>
+    </tr>
+    </table>
+
+    <!-- BODY -->
+    <table class="tb5-body-wrap">
+    <tr>
+
+      <!-- EARNINGS -->
+      <td class="tb5-pane-earn">
+        <div class="tb5-sec tb5-sec-green">Earnings</div>
+        <table>
+          <tr class="tb5-sub"><td style="width:42%;">Type</td><td style="width:29%;" class="tb5-sub-r">OT Min</td><td style="width:29%;" class="tb5-sub-r">Amount</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">Regular Pay</td><td style="text-align:right;color:#94a3b8;">&mdash;</td><td class="tb5-rv">P ${fmt(regularPay)}</td></tr>
+          ${otPay > 0
+            ? `<tr class="tb5-dr"><td class="tb5-rl">Overtime</td><td style="text-align:right;color:#64748b;">${otMinutes} min</td><td class="tb5-rv">P ${fmt(otPay)}</td></tr>`
+            : `<tr class="tb5-dr"><td class="tb5-rl" style="color:#94a3b8;">Overtime</td><td></td><td style="text-align:right;color:#94a3b8;">&mdash;</td></tr>`
+          }
+        </table>
+        <table style="margin-top:2px;">
+          <tr class="tb5-sub"><td style="width:70%;">Adjustment</td><td style="width:30%;" class="tb5-sub-r">Amount</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">Incentive</td>   <td class="tb5-rv" style="text-align:right;">${amtCell(incentive)}</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">Paid Leaves</td> <td class="tb5-rv" style="text-align:right;">${amtCell(paidLeaves)}</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">Holiday Pay</td> <td class="tb5-rv" style="text-align:right;">${amtCell(holidayPay)}</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">Others</td>      <td class="tb5-rv" style="text-align:right;">${amtCell(othersAdj)}</td></tr>
+                    <tr class="tb5-dr"><td class="tb5-rl">Training Pay</td>
+                        <td class="tb5-rv" style="text-align:right;">
+                            ${amtCell(trainingPay)}
+                            ${trainingPay > 0 ? '' : `<div style="font-size:11px;color:#94a3b8;margin-top:4px;">raw: ${debugTrainingRaw}</div>`}
+                        </td>
+                    </tr>
+        </table>
+      </td>
+
+      <!-- DEDUCTIONS -->
+      <td class="tb5-pane-ded">
+        <div class="tb5-sec tb5-sec-red">Deductions</div>
+        <table>
+          <tr class="tb5-sub"><td style="width:65%;">Description</td><td style="width:35%;" class="tb5-sub-r">Amount</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">Withholding Tax</td><td style="text-align:right;">${dedCell(whTax)}</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">SSS</td>            <td style="text-align:right;">${dedCell(sss)}</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">PhilHealth</td>     <td style="text-align:right;">${dedCell(philhealth)}</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">Pag-IBIG</td>       <td style="text-align:right;">${dedCell(pagibig)}</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">Tardiness</td>      <td style="text-align:right;">${dedCell(tardiness)}</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">Loan</td>           <td style="text-align:right;">${dedCell(loan)}</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">Others / C.A.</td>  <td style="text-align:right;">${dedCell(othersCa)}</td></tr>
+        </table>
+      </td>
+
+      <!-- SUMMARY -->
+      <td class="tb5-pane-sum" style="vertical-align:top;">
+        <div class="tb5-sec tb5-sec-navy">Summary</div>
+        <div class="tb5-hr-box">
+          <span class="tb5-hr-lbl">Hours Rendered</span>
+          <table><tr>
+            <td class="tb5-hv-g">${fmt(workHours)} hrs</td>
+            <td class="tb5-hv-s">/</td>
+            <td class="tb5-hv-b">${fmt(otHours)} OT</td>
+          </tr></table>
         </div>
-    `;
+        <table class="tb5-sum">
+          <tr><td class="tb5-sl">Gross Pay</td>        <td class="tb5-sv">P ${fmt(grossPay)}</td></tr>
+          <tr><td class="tb5-sl">Total Deductions</td> <td class="tb5-svr">P ${fmt(totalDeduct)}</td></tr>
+        </table>
+        <div class="tb5-net-box">
+          <span class="tb5-net-t">Net Pay</span>
+          <span class="tb5-net-v">P ${fmt(netPay)}</span>
+        </div>
+      </td>
+
+    </tr>
+    </table>
+
+    <!-- FOOTER -->
+    <table class="tb5-footer">
+    <tr>
+      <td class="tb5-footer-l" style="width:50%;">
+        <span class="tb5-foot-stamp">Received By</span>
+        <span class="tb5-sig-line"></span>
+        <span class="tb5-sig-note">Employee Signature &amp; Date</span>
+      </td>
+      <td style="width:50%;">
+        <span class="tb5-foot-stamp">Approved By</span>
+        <span class="tb5-sig-line"></span>
+        <span class="tb5-sig-note">Danver S. Reyes &mdash; Authorized Signatory</span>
+      </td>
+    </tr>
+    </table>
+
+    </div>`;
 }
+
+
 
 // Close modals when clicking outside
 document.addEventListener('click', function(event) {

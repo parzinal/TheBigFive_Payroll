@@ -1,4 +1,4 @@
-# TheBigFive Payroll System — Updated Analysis (Feb 24, 2026)
+# TheBigFive Payroll System — Updated Analysis (Mar 2, 2026)
 
 > **Scope:** This document identifies all changes, new features, and updates since the original [SYSTEM_ANALYSIS.md](SYSTEM_ANALYSIS.md) was written. It is NOT a rewrite — it focuses exclusively on **what changed**.
 
@@ -24,6 +24,16 @@
 | DTR Import | Enhanced — CSV support, TB5 auto-detection, auto employee creation |
 | Generatepayroll | Enhanced — payslip generation, training inputs, print DTR, full-view modal |
 | Process Payroll | Enhanced — YTD tracking, payroll_history table, expanded deduction types |
+| **Environment Config** | **NEW — `.env` file support + `bootstrap.php`; SMTP credentials no longer hardcoded** |
+| **System Settings Page** | **NEW — `admin/settings.php` (2,476 lines): Backup & Restore UI with 4 tabs** |
+| **Employee Classification** | **NEW — `classification` ENUM column on employees (Fix Rate / Trainer)** |
+| **DB Optimization Tools** | **NEW — `run_optimization.php` + `optimize_database.sql`: composite indexes** |
+| **DTR Export** | **NEW — `export_dtr_data.php`: Export filled TB5 Excel from saved DTR records** |
+| **Cron Backup** | **NEW — `cron_backup.php`: secure token-based cron endpoint for auto-backups** |
+| **Backup DB Tables** | **NEW — `backup_settings` + `backup_history` tables for backup system** |
+| **Delete User** | **NEW — `delete_user.php`: functional user deletion with last-admin protection** |
+| **Update DTR API** | **NEW — `update_dtr_records.php`: API to update saved DTR records from admin** |
+| **Security Hardening** | **NEW — `SECURITY_IMPLEMENTATION.md`; session hijacking prevention, 8h timeout** |
 
 ---
 
@@ -432,10 +442,10 @@ Plus 3 **views** and 3 **stored procedures** (see Section 4).
 | #1 | Missing `user/` directory | **RESOLVED** — Full `user/` directory created with dashboard, profile, account logs, notifications API |
 | #2 | Registration security — users can register as admin | Unknown (no `register.php` found in workspace) |
 | #3 | No CSRF protection | **RESOLVED** — Session-based CSRF tokens on all 18+ POST endpoints + all HTML forms |
-| #4 | SMTP credentials hardcoded | **Still present** |
+| #4 | SMTP credentials hardcoded | **RESOLVED** — `.env` file + `config/bootstrap.php` — SMTP config now read from environment variables |
 | #5 | Dual DB patterns (PDO vs MySQLi) | **RESOLVED** — All files now use PDO; `getMySQLiConnection()` removed |
 | #8 | No payroll approval workflow | **Partially addressed** — status field supports draft→computed→approved→paid, but no approval UI |
-| #10 | No backup/export | **RESOLVED** — Full backup/restore system via BackupManager + backup_api.php |
+| #10 | No backup/export | **RESOLVED** — Full backup/restore system via BackupManager + backup_api.php + settings.php UI |
 | #11 | `Add_emplooyees.php` filename typo | **Still present** |
 | #12 | Generatepayroll.php massive (now 6,433 lines) | **Still present** (grew by ~200 lines) |
 | #14 | Inconsistent input sanitization | Unknown |
@@ -464,7 +474,7 @@ Plus 3 **views** and 3 **stored procedures** (see Section 4).
 
 1. **Token Generation:** `getCSRFToken()` creates a 64-char hex token stored in `$_SESSION['csrf_token']`
 2. **Token Regeneration:** `regenerateCSRFToken()` called on every login to prevent session fixation
-3. **HTML Forms:** `csrfTokenField()` outputs `<input type="hidden" name="csrf_token" value="...">` 
+3. **HTML Forms:** `csrfTokenField()` outputs `<input type="hidden" name="csrf_token" value="...">`
 4. **Meta Tag:** `csrfMetaTag()` outputs `<meta name="csrf-token" content="...">` for JS access
 5. **JS Auto-Injection:** Fetch wrapper reads meta tag, adds `X-CSRF-Token` header + `csrf_token` field to FormData
 6. **Server Validation:** `validateCSRFToken()` checks `$_POST['csrf_token']` then `X-CSRF-Token` header
@@ -560,4 +570,265 @@ The `getMySQLiConnection()` function (12 lines) was deleted. The file now contai
 
 ---
 
-*Updated analysis completed: February 24, 2026*
+## NEW FEATURE: Environment Config & Bootstrap System (Resolves Issue #4)
+
+**Previously:** SMTP credentials were hardcoded directly in `config/smtp.php` as PHP constants — a security risk flagged as Issue #4.
+
+**Now:** A full environment variable system is in place:
+
+| File | Purpose |
+|---|---|
+| `.env.example` | Template — documents all available env variables (copy to `.env`) |
+| `.env` | Local environment file — holds real credentials, excluded by `.gitignore` |
+| `config/bootstrap.php` | Central bootstrap — loads `.env`, configures error display, sets security headers, hardens session |
+| `config/smtp.php` | Now reads from `env()` helper — no hardcoded credentials |
+
+### Bootstrap Features (`config/bootstrap.php` — 217 lines)
+- **Env loading** — Tries `vlucas/phpdotenv` Composer package first, falls back to built-in lightweight parser
+- **`env($key, $default)`** helper function with type casting (`true`/`false`/`null` string → PHP native)
+- **Error display control** — Uses `APP_DEBUG` env variable to toggle `display_errors`
+- **Security headers** — Sets `X-Frame-Options`, `X-Content-Type-Options`, `Referrer-Policy`, `Permissions-Policy`
+- **Session hardening** — Uses `SESSION_LIFETIME` env var, enforces `cookie_httponly`, `cookie_samesite`
+- **Guard against multiple includes** — `APP_BOOTSTRAPPED` constant prevents double-execution
+
+### `.env` Variables Supported
+
+| Variable | Purpose |
+|---|---|
+| `APP_ENV` | `local` / `production` |
+| `APP_DEBUG` | Toggle error display |
+| `APP_NAME` | Application name |
+| `APP_URL` | Base URL |
+| `DB_HOST`, `DB_PORT`, `DB_DATABASE`, `DB_USERNAME`, `DB_PASSWORD` | Database credentials |
+| `SMTP_HOST`, `SMTP_PORT`, `SMTP_USERNAME`, `SMTP_PASSWORD`, `SMTP_ENCRYPTION` | SMTP credentials |
+| `SMTP_FROM_ADDRESS`, `SMTP_FROM_NAME` | Email sender info |
+| `SESSION_LIFETIME` | Session timeout in minutes |
+
+> `.env` is excluded from version control via `.gitignore`. Sensitive credentials are never committed.
+
+---
+
+## NEW FEATURE: System Settings & Backup UI (`admin/settings.php`)
+
+**Previously:** BackupManager existed internally but there was no UI for it. Backup was accessible only via the `backup_api.php` endpoint.
+
+**Now:** A full 2,476-line admin settings page provides a visual interface for the entire backup system.
+
+### Settings Page Features
+
+| Tab | Purpose |
+|---|---|
+| **Backup Settings** | Toggle auto-backup on/off, set frequency (daily/weekly/monthly), set time, retention count |
+| **Manual Backup** | Trigger immediate backup with progress feedback, list available backup files |
+| **Backup History** | Table of all past backups with filename, size, type (manual/automatic), status, date |
+| **Restore** | Upload `.sql` backup file and restore the database with confirmation modal |
+
+### Stats Cards
+- Database Size
+- Total Tables count
+- Number of Backup Files
+- `mysqldump` availability status (green checkmark or warning)
+
+### Auto-Backup Config Options
+- Frequency: Daily / Weekly (day of week selector) / Monthly (day of month selector)
+- Backup Time: Time picker
+- Retention: Keep last N backups (auto-delete old ones)
+- Compression: Toggle gzip compression
+
+### Cron Integration
+- Displays cron command snippet for copy-paste into scheduler
+- `cron_backup.php` — standalone cron endpoint (140 lines) that validates a secure token before triggering a backup
+- Token stored in `backup_settings` table, regeneratable from the UI
+
+### New Database Tables (from `config/sql/backup_tables.sql`)
+
+| Table | Columns | Purpose |
+|---|---|---|
+| `backup_settings` | `id`, `setting_key` UNIQUE, `setting_value`, `updated_by`, `updated_at` | Persistent key-value store for all backup configuration |
+| `backup_history` | `id`, `filename`, `file_size`, `backup_type` ENUM, `status` ENUM, `tables_count`, `notes`, `created_by`, `created_at` | Audit trail for every backup created |
+
+---
+
+## NEW FEATURE: Employee Classification
+
+**Previously:** Employees had no classification type — all were treated identically for payroll purposes.
+
+**Now:** A `classification` column distinguishes employee types:
+
+| Column | Type | Values |
+|---|---|---|
+| `classification` | `ENUM('Fix Rate', 'Trainer')` NULL | `Fix Rate` — standard salaried; `Trainer` — trainer role |
+
+### Files Involved
+
+| File | Purpose |
+|---|---|
+| `admin/Add_emplooyees.php` | Form includes `classification` dropdown, saves to DB |
+| `admin/migrate_employee_classification.php` | Idempotent migration script — checks column existence before ALTER |
+| `config/sql/add_employee_classification.sql` | `ALTER TABLE employees ADD COLUMN IF NOT EXISTS classification ...` |
+
+> Classification is stored alongside status and is available in all employee listing/payroll queries.
+
+---
+
+## NEW FEATURE: Database Performance Optimization
+
+**Previously:** No performance tuning — database relied on default single-column indexes from `create_database.sql`.
+
+**Now:** A dedicated optimization pass adds composite indexes and removes redundant ones:
+
+### Files
+
+| File | Purpose |
+|---|---|
+| `admin/run_optimization.php` (151 lines) | Browser-accessible admin tool — applies/skips indexes idempotently with status display |
+| `config/sql/optimize_database.sql` (64 lines) | Raw SQL for the same changes (for phpMyAdmin use) |
+
+### Composite Indexes Added (Phase 1)
+
+| Index | Table | Columns | Query Pattern Covered |
+|---|---|---|---|
+| `idx_emp_period_date` | `dtr_records` | `employee_id, payroll_period_id, dtr_date` | Payroll aggregation, DTR fetch by period |
+| `idx_status_name` | `employees` | `status, full_name` | Employee lists filtered by status |
+| `idx_user_created` | `account_logs` | `user_id, created_at DESC` | Account log pages (all 3 roles) |
+| `idx_emp_status_created` | `payroll_computations` | `employee_id, status, created_at DESC` | Payslip history, payroll summaries |
+
+### Redundant Indexes Dropped (Phase 2)
+
+Removed single-column indexes that duplicate existing `UNIQUE` constraints (waste disk/memory, slow INSERTs):
+- `dtr_records.idx_employee_date` (duplicates `unique_employee_date`)
+- `employees.idx_employee_code` (duplicates `UNIQUE employee_code`)
+- `users.idx_username` / `users.idx_email` (duplicate `UNIQUE` constraints)
+- `deduction_types.idx_deduction_code`, `positions.idx_position_name`, `backup_settings.idx_setting_key`
+
+---
+
+## NEW FEATURE: DTR Export to Excel (`admin/export_dtr_data.php`)
+
+**Previously:** `download_dtr_template.php` generated a blank TB5 template. There was no way to export already-saved DTR records back to Excel.
+
+**Now:** `admin/export_dtr_data.php` (509 lines) generates a pre-filled TB5-format Excel file for any employee + payroll period combination.
+
+### Features
+- Accepts `?employee_id=X&period_id=Y` GET parameters
+- Fetches employee info, period info, all DTR records for that period
+- Also fetches `payroll_computations` record for government deduction pre-fill
+- Generates `.xlsx` using PhpSpreadsheet with the same column structure and styling as the template
+- Streams file directly as download (`Content-Disposition: attachment`)
+
+---
+
+## NEW FEATURE: Update DTR Records API (`admin/update_dtr_records.php`)
+
+**Previously:** DTR records could only be imported fresh via `import_dtr.php` or created via `save_dtr.php`. There was no dedicated endpoint to edit individual DTR rows after the fact.
+
+**Now:** `admin/update_dtr_records.php` (180 lines) is a JSON API that:
+- Accepts `employee_id`, `records[]` array, optional `period_id`, `basic_salary`, `per_day`, `late_start`, `end_time`
+- Updates individual DTR record fields for each submitted `dtr_date`
+- Validates admin authentication
+- Returns JSON success/error with detailed PHP error handler (returns JSON instead of raw PHP error output)
+
+---
+
+## NEW FEATURE: Functional User Deletion (`admin/delete_user.php`)
+
+**Previously:** `user_management.php` had a delete button in the UI but `delete_user.php` was not confirmed as implemented.
+
+**Now:** `delete_user.php` is a fully working GET-based delete endpoint:
+- Validates admin session
+- Prevents self-deletion (cannot delete own account)
+- **Last-admin protection** — if user is admin and only 1 admin exists, deletion is blocked with an error message
+- Logs deletion via `logDeleteAction()`
+- Redirects to `user_management.php` with success or error query parameter
+
+---
+
+## NEW: Diagnostic Tools
+
+| File | Purpose |
+|---|---|
+| `admin/check_extensions.php` (185 lines) | PHP extensions diagnostic page — shows status of required extensions (ZipArchive, PhpSpreadsheet deps, etc.) with Laragon-specific fix instructions |
+| `admin/check_braces.php` | PHP syntax checker utility |
+
+---
+
+## NEW: Additional SQL Migration Files
+
+| File | Purpose |
+|---|---|
+| `config/sql/backup_tables.sql` | Schema for `backup_settings` + `backup_history` tables with default seed data |
+| `config/sql/account_logs.sql` | Standalone CREATE TABLE for `account_logs` (with correct indexes) |
+| `config/sql/notifications.sql` | Standalone CREATE TABLE for `notifications` + sample welcome notification seed |
+| `config/sql/add_employee_classification.sql` | Adds `classification` ENUM column to employees |
+| `config/sql/optimize_database.sql` | Composite index additions + redundant index removals |
+| `config/sql/thebigfive_payroll.sql` | Full database dump (complete schema + seed data for deployment) |
+| `config/sql/DTR_USAGE_GUIDE.md` | Developer guide for DTR data structure and usage patterns |
+| `config/sql/README.md` | SQL folder index — which file to run for what purpose |
+
+---
+
+## UPDATED: Admin Sidebar
+
+**Now includes:**
+- Settings → `settings.php` (new menu item under the main nav, links to Backup & Restore page)
+
+Full admin sidebar navigation:
+- Dashboard
+- Employees (submenu): All Employees, Add Employee, Positions
+- Payroll (submenu): Payroll List, Generate Payroll, Payslip History
+- Account Management → `user_management.php`
+- My Profile → `profile.php`
+- Account Logs → `account_logs.php`
+- **Settings → `settings.php`** *(NEW)*
+- Logout (modal)
+
+---
+
+## UPDATED: Database Schema (Now 16 Tables)
+
+| Table | Status |
+|---|---|
+| `users` | Existing |
+| `employees` | Updated — new columns: `email`, `contact_number`, `address`, **`classification`** |
+| `payroll_periods` | Existing |
+| `dtr_records` | Updated — new columns: `is_variable`, `calculation_mode` |
+| `payroll_computations` | Updated — many new columns (training, deduction breakdowns, YTD, f1/f2) |
+| `deduction_types` | Existing |
+| `employee_deductions` | Existing |
+| `overtime_records` | Existing |
+| `leave_records` | Existing |
+| `holidays` | Existing |
+| `notifications` | Existing |
+| `account_logs` | Existing |
+| `positions` | NEW — Position definitions (name, description) |
+| `payroll_history` | NEW — Payroll audit trail (action_type, performed_by, notes) |
+| **`backup_settings`** | **NEW — Key-value store for backup configuration (cron token, schedule, retention)** |
+| **`backup_history`** | **NEW — Audit trail for every backup (filename, size, type, status)** |
+
+Plus 3 **views** and 3 **stored procedures** (see Section 4).
+
+---
+
+## UPDATED: New File Inventory (Since Feb 24 Analysis)
+
+| File | Lines | Purpose |
+|---|---|---|
+| `.env.example` | 30 | Environment config template |
+| `.gitignore` | — | Excludes `.env`, `vendor/`, `backups/` from VCS |
+| `cron_backup.php` | 140 | Token-authenticated cron endpoint for automatic backups |
+| `SECURITY_IMPLEMENTATION.md` | 298 | Documents auth system, RBAC, session security scenarios |
+| `config/bootstrap.php` | 217 | Central bootstrap: env loading, security headers, session hardening |
+| `admin/settings.php` | 2,476 | System Settings UI: Backup & Restore with 4 tabs |
+| `admin/migrate_employee_classification.php` | 38 | Migration script: adds `classification` column to employees |
+| `admin/run_optimization.php` | 151 | DB index optimizer (browser-accessible, idempotent) |
+| `admin/export_dtr_data.php` | 509 | Export saved DTR records as filled TB5 Excel download |
+| `admin/update_dtr_records.php` | 180 | API: update individual DTR rows for an employee |
+| `admin/delete_user.php` | 72 | Functional user deletion with last-admin protection |
+| `admin/check_extensions.php` | 185 | PHP extensions diagnostic page |
+| `admin/check_braces.php` | — | PHP syntax checker utility |
+| `config/sql/backup_tables.sql` | — | Schema for `backup_settings` + `backup_history` tables |
+| `config/sql/account_logs.sql` | — | Standalone `account_logs` table schema |
+
+---
+
+*Updated analysis completed: March 2, 2026*

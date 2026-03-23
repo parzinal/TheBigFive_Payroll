@@ -827,7 +827,7 @@ body {
 .header-brand-section {
     display: flex;
     align-items: center;
-    gap: 0px; /* no gap between logo and text */
+    gap: 8px; /* small gap between logo and text */
     min-width: 0;
     flex-shrink: 1;
 }

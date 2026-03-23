@@ -4,16 +4,19 @@
  * Saves employee info and DTR data from the imported Excel/form
  * Auto-generates employee code if not provided
  */
-
+ob_start();
 require_once '../config/bootstrap.php';
+ob_end_clean();
 header('Content-Type: application/json');
 
 require_once '../config/database.php';
+require_once '../config/auth.php';
 require_once '../config/account_logs_helper.php';
 require_once '../config/csrf.php';
+require_once '../config/notifications_helper.php';
 
-// Check authentication
-if (!isset($_SESSION['user_id'])) {
+// H1: Require admin role
+if (!isAuthenticated() || !isAdmin()) {
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit();
 }
@@ -28,7 +31,6 @@ requireCSRFToken();
 
 try {
     $pdo = getDBConnection();
-    $pdo->beginTransaction();
     
     $createdBy = $_SESSION['user_id'];
     
@@ -38,6 +40,7 @@ try {
     $employeeCode = trim($_POST['employee_code'] ?? '');
     $position = trim($_POST['position'] ?? '');
     $department = trim($_POST['department'] ?? '');
+        $classification = trim($_POST['classification'] ?? '');
     $salary = floatval($_POST['salary'] ?? 0);
     $periodStart = $_POST['period_start'] ?? null;
     $periodEnd = $_POST['period_end'] ?? null;
@@ -57,12 +60,20 @@ try {
     $philhealthContrib   = floatval($_POST['philhealth_contribution'] ?? 0);
     $pagibigContrib      = floatval($_POST['pagibig_contribution']   ?? 0);
     
+    // Schedule thresholds (late start and end time)
+    $lateThreshold = $_POST['late_threshold'] ?? '8:00';
+    $endThreshold = $_POST['end_threshold'] ?? '17:00';
+    
     // New payroll summary fields
     $daysOffice = intval($_POST['days_office'] ?? 0);
     $grossPay = floatval($_POST['gross_pay'] ?? 0);
     $trainingsCount = intval($_POST['trainings_count'] ?? 0);
     $paymentPerTrainee = floatval($_POST['payment_per_trainee'] ?? 0);
     $trainingsCost = floatval($_POST['trainings_cost'] ?? 0);
+    
+    // Get per_day_rate from POST if provided (preserves correct rate when Sunday work is included)
+    // If not provided, will be calculated later from salary ÷ 26
+    $perDayRateFromPost = isset($_POST['per_day_rate']) ? floatval($_POST['per_day_rate']) : null;
     
     if (empty($employeeName) && !$directEmployeeId) {
         throw new Exception('Employee name is required');
@@ -73,7 +84,11 @@ try {
         throw new Exception('No DTR records provided');
     }
     
-    // Check if employee exists or create new
+    // ================================================================
+    // EMPLOYEE LOOKUP/CREATION — done OUTSIDE the main transaction
+    // so the new employee row is immediately visible to other requests
+    // (prevents duplicate employee_code when saving multiple employees)
+    // ================================================================
     $employeeId = null;
 
     // Use directly supplied employee_id (from dropdown selection)
@@ -110,17 +125,48 @@ try {
     }
     
     if (!$employeeId) {
-        // Create new employee with auto-generated code
-        if (empty($employeeCode)) {
-            $employeeCode = generateNextEmployeeCode($pdo);
+        // Create new employee with auto-generated code (with retry for race conditions)
+        $maxRetries = 10;
+        for ($attempt = 0; $attempt < $maxRetries; $attempt++) {
+            try {
+                if (empty($employeeCode) || $attempt > 0) {
+                    $employeeCode = generateNextEmployeeCode($pdo);
+                }
+                
+                    $stmt = $pdo->prepare("
+                        INSERT INTO employees (employee_code, full_name, position, department, basic_monthly_salary, status, classification, created_at)
+                        VALUES (?, ?, ?, ?, ?, 'active', ?, NOW())
+                    ");
+                    // Normalize classification to canonical ENUM values ('Trainer' or 'Fix Rate')
+                    $normClass = strtolower(preg_replace('/\s+/', '', $classification ?? ''));
+                    if ($normClass === 'trainer') {
+                        $safeClass = 'Trainer';
+                    } elseif (in_array($normClass, ['fixrate', 'fixedrate', 'fix'])) {
+                        $safeClass = 'Fix Rate';
+                    } else {
+                        $safeClass = null;
+                    }
+                    $stmt->execute([$employeeCode, $employeeName, $position, $department, $salary, $safeClass]);
+                $employeeId = $pdo->lastInsertId();
+                break; // Success
+            } catch (PDOException $e) {
+                // If duplicate key error on employee_code, retry with a new code
+                if ($e->getCode() == 23000 && strpos($e->getMessage(), 'employee_code') !== false) {
+                    // After a few failed numeric attempts, switch to a timestamp+random fallback to avoid collisions
+                    if ($attempt >= 3) {
+                        $employeeCode = generateFallbackEmployeeCode();
+                    } else {
+                        $employeeCode = ''; // Force regeneration using normal generator
+                    }
+                    if ($attempt === $maxRetries - 1) {
+                        throw new Exception('Could not generate a unique employee code after ' . $maxRetries . ' attempts');
+                    }
+                    usleep(50000); // 50ms delay before retry
+                    continue;
+                }
+                throw $e; // Re-throw non-duplicate errors
+            }
         }
-        
-        $stmt = $pdo->prepare("
-            INSERT INTO employees (employee_code, full_name, position, department, basic_monthly_salary, status, created_at)
-            VALUES (?, ?, ?, ?, ?, 'active', NOW())
-        ");
-        $stmt->execute([$employeeCode, $employeeName, $position, $department, $salary]);
-        $employeeId = $pdo->lastInsertId();
     } else {
         // Update existing employee info if provided
         $updateFields = [];
@@ -139,6 +185,22 @@ try {
             $updateParams[] = $salary;
         }
         
+        // If classification provided, validate and include it
+        if (!empty($classification)) {
+            $normClass = strtolower(preg_replace('/\s+/', '', $classification ?? ''));
+            if ($normClass === 'trainer') {
+                $safeClass = 'Trainer';
+            } elseif (in_array($normClass, ['fixrate', 'fixedrate', 'fix'])) {
+                $safeClass = 'Fix Rate';
+            } else {
+                $safeClass = null;
+            }
+            if ($safeClass !== null) {
+                $updateFields[] = "classification = ?";
+                $updateParams[] = $safeClass;
+            }
+        }
+
         if (!empty($updateFields)) {
             $updateParams[] = $employeeId;
             $sql = "UPDATE employees SET " . implode(', ', $updateFields) . ", updated_at = NOW() WHERE id = ?";
@@ -146,6 +208,12 @@ try {
             $stmt->execute($updateParams);
         }
     }
+    
+    // ================================================================
+    // BEGIN TRANSACTION for DTR records, payroll period, and computations
+    // (Employee creation is already committed above)
+    // ================================================================
+    $pdo->beginTransaction();
     
     // Find or create payroll period
     $payrollPeriodId = null;
@@ -175,12 +243,12 @@ try {
             employee_id, payroll_period_id, dtr_date,
             am_time_in, am_time_out, pm_time_in, pm_time_out,
             ot_time_out, halfday_in, halfday_out, is_halfday,
-            is_absent, remarks,
+            is_absent, is_training, remarks,
             total_work_hours, late_minutes, late_hours,
             undertime_minutes, undertime_hours, daily_ot_hours,
             govt_deduct, net_salary,
             created_at, created_by, updated_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)
         ON DUPLICATE KEY UPDATE
             payroll_period_id = VALUES(payroll_period_id),
             am_time_in = VALUES(am_time_in),
@@ -192,6 +260,7 @@ try {
             halfday_out = VALUES(halfday_out),
             is_halfday = VALUES(is_halfday),
             is_absent = VALUES(is_absent),
+            is_training = VALUES(is_training),
             remarks = VALUES(remarks),
             total_work_hours = VALUES(total_work_hours),
             late_minutes = VALUES(late_minutes),
@@ -217,6 +286,7 @@ try {
         $halfIn = parseTimeFor24h($record['half_in'] ?? '');
         $halfOut = parseTimeFor24h($record['half_out'] ?? '');
         $isAbsent = intval($record['is_absent'] ?? 0);
+        $isTraining = intval($record['is_training'] ?? 0);
         $remarks = $record['remarks'] ?? '';
         
         // Calculated fields per row
@@ -229,13 +299,15 @@ try {
         $rowGovtDeduct       = floatval($record['govt_deduct']         ?? 0);
         $rowNetSalary        = isset($record['auto_salary']) && $record['auto_salary'] !== '' 
                                  ? floatval($record['auto_salary']) : null;
-        $isHalfday           = (!empty($halfIn) || !empty($halfOut)) ? 1 : 0;
+        // Use is_halfday from payload if provided, otherwise check halfday times
+        $isHalfday           = isset($record['is_halfday']) ? intval($record['is_halfday']) 
+                                 : ((!empty($halfIn) || !empty($halfOut)) ? 1 : 0);
 
         // Upsert: INSERT or UPDATE using UNIQUE KEY (employee_id, dtr_date)
         $upsertStmt->execute([
             $employeeId, $payrollPeriodId, $dtrDate,
             $amIn, $amOut, $pmIn, $pmOut, $otOut, $halfIn, $halfOut, $isHalfday,
-            $isAbsent, $remarks,
+            $isAbsent, $isTraining, $remarks,
             $rowTotalWorkHours, $rowLateMinutes, $rowLateHours,
             $rowUndertimeMinutes, $rowUndertimeHours, $rowOtHours,
             $rowGovtDeduct, $rowNetSalary,
@@ -246,13 +318,34 @@ try {
     
     // Save payroll computation with training data
     if ($payrollPeriodId && $employeeId) {
-        $perDayRate = $salary / 15; // 15 days per cut-off computation
+        // Use per_day_rate from POST if provided (preserves correct rate when Sunday work is included in salary)
+        // Otherwise, calculate: salary ÷ 26 (standard working days per month, excluding Sundays)
+        $perDayRate = $perDayRateFromPost ?? ($salary / 26);
         $perHourRate = $perDayRate / 8;
         $perMinuteRate = $perHourRate / 60;
 
         // Derive totals that were not sent separately
         $totalWorkHoursSum  = array_sum(array_column($dtrRecords, 'total_work_hours'));
         $totalLateMinutesSum = (int) round($totalLateHours * 60);
+
+        // Build other_deductions_notes JSON with DTR breakdown
+        // This is read by generate_payslip_pdf.php for the TARDINESS line item
+        $otherDeductionsNotes = json_encode([
+            'dtr_data' => [
+                'late_deduct'      => $totalLateDeduct,
+                'undertime_deduct' => $totalUtDeduct,
+                'halfday_deduct'   => $totalHalfDeduct,
+                'absent_deduct'    => $totalAbsentDeduct,
+                'late_minutes'     => $totalLateMinutesSum,
+                'undertime_hours'  => $totalUndertimeHours,
+                'absent_days'      => $totalAbsentDays,
+            ],
+            'per_day_rate'    => $perDayRate,
+            'per_hour_rate'   => $perHourRate,
+            'per_minute_rate' => $perMinuteRate,
+            'standard_hours'  => $totalWorkHoursSum,
+            'overtime_hours'  => $totalOtHours,
+        ]);
 
         // Check if payroll computation exists
         $stmt = $pdo->prepare("SELECT id FROM payroll_computations WHERE employee_id = ? AND payroll_period_id = ?");
@@ -294,7 +387,11 @@ try {
                     trainings_count = ?,
                     payment_per_trainee = ?,
                     trainings_cost = ?,
+                    training_amount = ?,
                     days_office = ?,
+                    late_start = ?,
+                    end_time = ?,
+                    other_deductions_notes = ?,
                     status = 'computed',
                     computed_by = ?,
                     computed_at = NOW(),
@@ -308,8 +405,10 @@ try {
                 $grossPay, $totalOtPay,
                 $totalLateDeduct, $totalUtDeduct, $totalAbsentDeduct,
                 $sssContribution, $philhealthContrib, $pagibigContrib,
-                $grossPay + $totalOtPay, $totalDeductions, $netPay,
-                $trainingsCount, $paymentPerTrainee, $trainingsCost, $daysOffice,
+                $grossPay + $totalOtPay + $trainingsCost, $totalDeductions, $netPay,
+                $trainingsCount, $paymentPerTrainee, $trainingsCost, $trainingsCost, $daysOffice,
+                $lateThreshold, $endThreshold,
+                $otherDeductionsNotes,
                 $createdBy, $existingComp['id']
             ]);
         } else {
@@ -323,9 +422,11 @@ try {
                     basic_pay, ot_pay, late_deduction, undertime_deduction, absent_deduction,
                     sss_contribution, philhealth_contribution, pagibig_contribution,
                     total_earnings, total_deductions, net_pay,
-                    trainings_count, payment_per_trainee, trainings_cost, days_office,
+                    trainings_count, payment_per_trainee, trainings_cost, training_amount, days_office,
+                    late_start, end_time,
+                    other_deductions_notes,
                     status, computed_by, computed_at, created_at
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'computed', ?, NOW(), NOW())
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'computed', ?, NOW(), NOW())
             ");
             $stmt->execute([
                 $employeeId, $payrollPeriodId, $salary,
@@ -334,8 +435,10 @@ try {
                 $totalLateHours, $totalUndertimeHours, $totalOtHours, $totalAbsentDays,
                 $grossPay, $totalOtPay, $totalLateDeduct, $totalUtDeduct, $totalAbsentDeduct,
                 $sssContribution, $philhealthContrib, $pagibigContrib,
-                $grossPay + $totalOtPay, $totalDeductions, $netPay,
-                $trainingsCount, $paymentPerTrainee, $trainingsCost, $daysOffice,
+                $grossPay + $totalOtPay + $trainingsCost, $totalDeductions, $netPay,
+                $trainingsCount, $paymentPerTrainee, $trainingsCost, $trainingsCost, $daysOffice,
+                $lateThreshold, $endThreshold,
+                $otherDeductionsNotes,
                 $createdBy
             ]);
         }
@@ -350,6 +453,9 @@ try {
         "{$savedCount} records saved",
         $pdo
     );
+
+    // Send notification to admins and staff about the DTR import
+    notifyDTRImported($employeeName, $savedCount, $_SESSION['username'] ?? '');
     
     $pdo->commit();
     
@@ -390,6 +496,14 @@ function generateNextEmployeeCode($pdo) {
     }
     
     return 'EMP-' . str_pad($nextNum, 5, '0', STR_PAD_LEFT);
+}
+
+/**
+ * Generate a fallback employee code using timestamp + random suffix
+ * Very low collision probability; used when sequential generation collides repeatedly
+ */
+function generateFallbackEmployeeCode() {
+    return 'EMP-' . date('YmdHis') . '-' . mt_rand(1000, 9999);
 }
 
 /**

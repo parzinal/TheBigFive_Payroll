@@ -200,36 +200,12 @@ Add logging at these key points in your application:
 2. **logout.php**
    - Log user logouts
 
-3. **profile.php** (admin/staff)
+3. **profile.php**
    - Log profile updates
    - Log password changes
 
-4. **user_management.php**
-   - Log user creation
-   - Log user updates
-   - Log user deletion
-
-5. **Add_emplooyees.php**
+4. **admin/Add_emplooyees.php**
    - Log employee creation
-   - Log employee updates
 
-6. **Other critical actions**
-   - Payroll generation
-   - DTR imports
-   - Permission changes
-
-## Security Benefits
-
-- Audit trail for compliance
-- Track unauthorized access attempts
-- Monitor user activities
-- Investigate security incidents
-- Identify suspicious patterns
-
-## Notes
-
-- Logs are automatically timestamped
-- IP addresses are captured automatically
-- User agent (browser) information is stored
-- Failed login attempts can track username even without user_id
-- Old logs can be archived or purged based on retention policy
+5. **admin/employee_list.php**
+   - Log employee updates and deletions

@@ -5,12 +5,13 @@
  */
 
 require_once '../config/bootstrap.php';
+require_once '../config/auth.php';
 header('Content-Type: application/json');
 
 require_once '../config/database.php';
 
-// Check authentication
-if (!isset($_SESSION['user_id'])) {
+// Allow admin and staff roles
+if (!isAuthenticated() || (!isAdmin() && !isStaff())) {
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit();
 }

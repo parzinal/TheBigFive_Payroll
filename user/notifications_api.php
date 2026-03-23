@@ -60,9 +60,9 @@ try {
             
         case 'mark_read':
             // Mark single notification as read
-            $notification_id = $_POST['notification_id'] ?? null;
+            $notification_id = isset($_POST['notification_id']) ? intval($_POST['notification_id']) : 0;
             
-            if (!$notification_id) {
+            if ($notification_id <= 0) {
                 echo json_encode(['success' => false, 'message' => 'Notification ID required']);
                 exit();
             }
@@ -93,9 +93,9 @@ try {
             
         case 'delete':
             // Delete notification
-            $notification_id = $_POST['notification_id'] ?? null;
+            $notification_id = isset($_POST['notification_id']) ? intval($_POST['notification_id']) : 0;
             
-            if (!$notification_id) {
+            if ($notification_id <= 0) {
                 echo json_encode(['success' => false, 'message' => 'Notification ID required']);
                 exit();
             }
@@ -120,6 +120,7 @@ try {
     }
     
 } catch (PDOException $e) {
-    echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
+    error_log('Notifications API Error: ' . $e->getMessage());
+    echo json_encode(['success' => false, 'message' => 'A database error occurred']);
 }
 ?>

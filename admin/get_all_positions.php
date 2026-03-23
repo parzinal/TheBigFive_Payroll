@@ -5,9 +5,10 @@
  */
 
 require_once '../config/bootstrap.php';
+require_once '../config/auth.php';
 
-// Check if user is logged in
-if (!isset($_SESSION['user_id'])) {
+// H1: Require admin role
+if (!isAuthenticated() || !isAdmin()) {
     echo json_encode(['success' => false, 'message' => 'Unauthorized access']);
     exit;
 }

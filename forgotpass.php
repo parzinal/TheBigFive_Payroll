@@ -24,6 +24,43 @@ $error = '';
 $success = '';
 $step = $_GET['step'] ?? 'email'; // email, otp, reset
 
+// H5: OTP rate limiting — max 5 OTP requests per email per hour
+function checkOTPRateLimit(string $email): bool {
+    $key = 'otp_attempts_' . md5($email);
+    if (!isset($_SESSION[$key])) {
+        $_SESSION[$key] = ['count' => 0, 'first_attempt' => time()];
+    }
+    $data = &$_SESSION[$key];
+    // Reset window after 1 hour
+    if (time() - $data['first_attempt'] > 3600) {
+        $data = ['count' => 0, 'first_attempt' => time()];
+    }
+    return $data['count'] < 5;
+}
+
+function recordOTPAttempt(string $email): void {
+    $key = 'otp_attempts_' . md5($email);
+    if (!isset($_SESSION[$key])) {
+        $_SESSION[$key] = ['count' => 0, 'first_attempt' => time()];
+    }
+    $_SESSION[$key]['count']++;
+}
+
+// H5: OTP verification rate limiting — max 5 wrong OTP entries per session
+function checkOTPVerifyLimit(): bool {
+    if (!isset($_SESSION['otp_verify_attempts'])) {
+        $_SESSION['otp_verify_attempts'] = 0;
+    }
+    return $_SESSION['otp_verify_attempts'] < 5;
+}
+
+function recordOTPVerifyAttempt(): void {
+    if (!isset($_SESSION['otp_verify_attempts'])) {
+        $_SESSION['otp_verify_attempts'] = 0;
+    }
+    $_SESSION['otp_verify_attempts']++;
+}
+
 if ($_SERVER['REQUEST_METHOD'] == 'POST') {
     // Validate CSRF token
     if (!validateCSRFToken()) {
@@ -38,6 +75,8 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             $error = 'Please enter your email address';
         } elseif (!filter_var($email, FILTER_VALIDATE_EMAIL)) {
             $error = 'Invalid email format';
+        } elseif (!checkOTPRateLimit($email)) {
+            $error = 'Too many OTP requests. Please try again later (max 5 per hour).';
         } else {
             try {
                 $pdo = getDBConnection();
@@ -58,6 +97,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
                     
                     // Send OTP email
                     if (sendOTPEmail($user['email'], $user['full_name'], $otp)) {
+                        recordOTPAttempt($email);
                         header('Location: forgotpass.php?step=otp');
                         exit();
                     } else {
@@ -79,6 +119,10 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
         
         if (empty($entered_otp)) {
             $error = 'Please enter the OTP code';
+        } elseif (!checkOTPVerifyLimit()) {
+            $error = 'Too many failed OTP attempts. Please request a new OTP.';
+            unset($_SESSION['reset_otp'], $_SESSION['reset_otp_expiry']);
+            $step = 'email';
         } elseif (!isset($_SESSION['reset_otp']) || !isset($_SESSION['reset_otp_expiry'])) {
             $error = 'Session expired. Please start over.';
             $step = 'email';
@@ -87,6 +131,7 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
             unset($_SESSION['reset_otp'], $_SESSION['reset_otp_expiry']);
             $step = 'email';
         } elseif ($entered_otp !== $_SESSION['reset_otp']) {
+            recordOTPVerifyAttempt();
             $error = 'Invalid OTP code. Please try again.';
         } else {
             // OTP verified successfully
@@ -144,6 +189,15 @@ if ($_SERVER['REQUEST_METHOD'] == 'POST') {
 
 // Handle resend OTP (GET request — outside POST block)
 if (isset($_GET['resend']) && $_GET['resend'] == '1' && isset($_SESSION['reset_email'])) {
+    // H5: Resend cooldown — 60 seconds between resends
+    $resendCooldown = 60;
+    $lastResend = $_SESSION['otp_last_resend'] ?? 0;
+    if (time() - $lastResend < $resendCooldown) {
+        $remaining = $resendCooldown - (time() - $lastResend);
+        $error = "Please wait {$remaining} seconds before requesting a new OTP.";
+    } elseif (!checkOTPRateLimit($_SESSION['reset_email'])) {
+        $error = 'Too many OTP requests. Please try again later (max 5 per hour).';
+    } else {
     try {
         $pdo = getDBConnection();
         $stmt = $pdo->prepare("SELECT id, full_name, email FROM users WHERE email = ? LIMIT 1");
@@ -158,6 +212,9 @@ if (isset($_GET['resend']) && $_GET['resend'] == '1' && isset($_SESSION['reset_e
             $_SESSION['reset_otp_expiry'] = $otp_expiry;
             
             if (sendOTPEmail($user['email'], $user['full_name'], $otp)) {
+                recordOTPAttempt($_SESSION['reset_email']);
+                $_SESSION['otp_last_resend'] = time();
+                $_SESSION['otp_verify_attempts'] = 0; // Reset verify attempts on new OTP
                 $success = 'New OTP has been sent to your email address';
             } else {
                 $error = 'Failed to send OTP email. Please try again later.';
@@ -169,6 +226,7 @@ if (isset($_GET['resend']) && $_GET['resend'] == '1' && isset($_SESSION['reset_e
         error_log("Resend OTP Error: " . $e->getMessage());
         $error = 'An error occurred while resending OTP. Please try again.';
     }
+    } // end rate limit else
 }
 ?>
 <!DOCTYPE html>
@@ -449,6 +507,19 @@ if (isset($_GET['resend']) && $_GET['resend'] == '1' && isset($_SESSION['reset_e
                 }
             });
         }
+
+        // S7: Prevent double-submit on all forgotpass forms
+        document.querySelectorAll('.login-form').forEach(function(form) {
+            form.addEventListener('submit', function() {
+                const btn = form.querySelector('button[type="submit"]');
+                if (btn) {
+                    btn.disabled = true;
+                    btn.style.opacity = '0.6';
+                    btn.style.cursor = 'not-allowed';
+                    btn.textContent = 'PROCESSING...';
+                }
+            });
+        });
     </script>
 </body>
 </html>

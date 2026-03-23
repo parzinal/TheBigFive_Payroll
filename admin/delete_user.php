@@ -1,25 +1,43 @@
 <?php
-// Delete user endpoint (supports GET redirect from UI)
+// Delete user endpoint — POST + CSRF required (C2 fix)
 require_once '../config/bootstrap.php';
 
 require_once '../config/database.php';
 require_once '../config/account_logs_helper.php';
+require_once '../config/auth.php';
+require_once '../config/csrf.php';
+
+header('Content-Type: application/json');
 
 // Only admins may delete users
-if (!isset($_SESSION['user_id']) || ($_SESSION['role'] ?? '') !== 'admin') {
-    header('Location: user_management.php?error=' . urlencode('Unauthorized'));
+if (!isAuthenticated() || !isAdmin()) {
+    http_response_code(401);
+    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit;
 }
 
-$userId = isset($_GET['id']) ? intval($_GET['id']) : 0;
+// Must be POST
+if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
+    http_response_code(405);
+    echo json_encode(['success' => false, 'message' => 'Method not allowed. Use POST.']);
+    exit;
+}
+
+// Validate CSRF
+requireCSRFToken();
+
+// Accept JSON body or form data
+$input = json_decode(file_get_contents('php://input'), true);
+$userId = intval($input['id'] ?? ($_POST['id'] ?? 0));
+
 if ($userId <= 0) {
-    header('Location: user_management.php?error=' . urlencode('Invalid user id'));
+    echo json_encode(['success' => false, 'message' => 'Invalid user id']);
     exit;
 }
 
 // Prevent deleting self
 if ($userId == ($_SESSION['user_id'] ?? 0)) {
-    header('Location: user_management.php?error=' . urlencode('You cannot delete your own account'));
+    echo json_encode(['success' => false, 'message' => 'You cannot delete your own account']);
     exit;
 }
 
@@ -31,16 +49,15 @@ try {
     $stmt->execute([$userId]);
     $user = $stmt->fetch();
     if (!$user) {
-        header('Location: user_management.php?error=' . urlencode('User not found'));
+        echo json_encode(['success' => false, 'message' => 'User not found']);
         exit;
     }
 
-    // Optionally prevent deleting other admins if needed (preserve at least one admin)
+    // Prevent deleting the last admin
     if ($user['role'] === 'admin') {
-        // Check count of admins
         $c = $pdo->query("SELECT COUNT(*) FROM users WHERE role = 'admin'")->fetchColumn();
         if ($c <= 1) {
-            header('Location: user_management.php?error=' . urlencode('Cannot delete the last administrator'));
+            echo json_encode(['success' => false, 'message' => 'Cannot delete the last administrator']);
             exit;
         }
     }
@@ -50,7 +67,6 @@ try {
     $ok = $del->execute([$userId]);
 
     if ($ok) {
-        // Log deletion
         logDeleteAction(
             $_SESSION['user_id'],
             $_SESSION['username'] ?? '',
@@ -58,17 +74,12 @@ try {
             "{$user['full_name']} ({$user['username']})",
             $pdo
         );
-
-        header('Location: user_management.php?success=' . urlencode('User deleted'));
-        exit;
+        echo json_encode(['success' => true, 'message' => 'User deleted successfully']);
     } else {
-        header('Location: user_management.php?error=' . urlencode('Failed to delete user'));
-        exit;
+        echo json_encode(['success' => false, 'message' => 'Failed to delete user']);
     }
 
 } catch (PDOException $e) {
-    header('Location: user_management.php?error=' . urlencode('Database error: ' . $e->getMessage()));
-    exit;
+    echo json_encode(['success' => false, 'message' => 'Database error: ' . $e->getMessage()]);
 }
-
 ?>

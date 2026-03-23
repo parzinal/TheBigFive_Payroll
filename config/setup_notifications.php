@@ -4,6 +4,15 @@
  * Run this file once to create the notifications table in your database
  */
 
+require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/auth.php';
+
+// H2: Only admins may run setup scripts
+if (!isAuthenticated() || !isAdmin()) {
+    http_response_code(403);
+    die('Access Denied. Admin authentication required.');
+}
+
 require_once __DIR__ . '/database.php';
 
 try {

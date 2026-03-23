@@ -323,7 +323,12 @@ try {
 
 <!-- Edit User Modal -->
 <div id="editModal" class="modal">
-    <div class="modal-content">
+    <div class="modal-content" style="position: relative;">
+        <!-- Loading Overlay -->
+        <div id="editModalOverlay" class="modal-loading-overlay">
+            <div class="spinner"></div>
+            <span class="loading-text">Updating user...</span>
+        </div>
         <div class="modal-header">
             <h3><i class="fas fa-edit"></i> Edit User</h3>
             <button class="modal-close" onclick="closeEditModal()">&times;</button>
@@ -1161,6 +1166,49 @@ select.form-input:focus {
         justify-content: center;
     }
 }
+
+/* Modal Loading Overlay */
+.modal-loading-overlay {
+    display: none;
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+    background: rgba(255, 255, 255, 0.85);
+    backdrop-filter: blur(2px);
+    z-index: 10;
+    border-radius: 12px;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+}
+
+.modal-loading-overlay.active {
+    display: flex;
+}
+
+.modal-loading-overlay .spinner {
+    width: 48px;
+    height: 48px;
+    border: 4px solid #E5E7EB;
+    border-top: 4px solid #2563EB;
+    border-radius: 50%;
+    animation: overlaySpinner 0.8s linear infinite;
+}
+
+.modal-loading-overlay .loading-text {
+    font-size: 15px;
+    font-weight: 600;
+    color: #374151;
+    letter-spacing: 0.3px;
+}
+
+@keyframes overlaySpinner {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
 </style>
 
 <script>
@@ -1293,10 +1341,34 @@ function closeDeleteModal() {
     pendingDeleteUsername = null;
 }
 
-// Confirm delete action
+// Confirm delete action (C2: uses POST + CSRF instead of GET)
 function confirmDeleteAction() {
     if (!pendingDeleteId) return;
-    window.location.href = 'delete_user.php?id=' + pendingDeleteId;
+    const btn = document.querySelector('#deleteConfirmModal .btn-danger');
+    if (btn) { btn.disabled = true; btn.textContent = 'Deleting...'; }
+
+    const csrfToken = document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '';
+    fetch('delete_user.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+            'X-CSRF-Token': csrfToken
+        },
+        body: JSON.stringify({ id: pendingDeleteId })
+    })
+    .then(r => r.json())
+    .then(data => {
+        if (data.success) {
+            window.location.href = 'user_management.php?success=' + encodeURIComponent(data.message);
+        } else {
+            alert(data.message || 'Delete failed');
+            if (btn) { btn.disabled = false; btn.textContent = 'Delete'; }
+        }
+    })
+    .catch(() => {
+        alert('Network error. Please try again.');
+        if (btn) { btn.disabled = false; btn.textContent = 'Delete'; }
+    });
 }
 
 // Close modal when clicking outside
@@ -1457,12 +1529,25 @@ function updateUser(event) {
     const formData = new FormData(document.getElementById('editUserForm'));
     formData.append('action', 'update_user');
     
+    // Show loading state on button
+    const submitBtn = event.target.querySelector('button[type="submit"]');
+    const originalText = submitBtn.innerHTML;
+    submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Updating...';
+    submitBtn.disabled = true;
+    
+    // Show modal loading overlay
+    const overlay = document.getElementById('editModalOverlay');
+    overlay.classList.add('active');
+    
     fetch('user_management.php', {
         method: 'POST',
         body: formData
     })
     .then(response => response.json())
     .then(data => {
+        // Hide overlay
+        overlay.classList.remove('active');
+        
         if (data.success) {
             showNotification(data.message, 'success');
             closeEditModal();
@@ -1473,11 +1558,20 @@ function updateUser(event) {
             }, 1500);
         } else {
             showNotification(data.message, 'error');
+            // Restore button
+            submitBtn.innerHTML = originalText;
+            submitBtn.disabled = false;
         }
     })
     .catch(error => {
+        // Hide overlay
+        overlay.classList.remove('active');
+        
         showNotification('An error occurred while updating the user', 'error');
         console.error('Error:', error);
+        // Restore button
+        submitBtn.innerHTML = originalText;
+        submitBtn.disabled = false;
     });
 }
 

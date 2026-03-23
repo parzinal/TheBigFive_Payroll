@@ -11,7 +11,7 @@ require_once '../config/database.php';
 
 // Get all active employees
 $pdo = getDBConnection();
-$stmt = $pdo->prepare("SELECT id, employee_code, full_name, position, department, basic_monthly_salary FROM employees WHERE status = 'active' ORDER BY full_name ASC");
+$stmt = $pdo->prepare("SELECT id, employee_code, full_name, position, department, basic_monthly_salary, classification FROM employees WHERE status = 'active' ORDER BY full_name ASC");
 $stmt->execute();
 $employees = $stmt->fetchAll();
 
@@ -57,9 +57,9 @@ $payroll_periods = $stmt->fetchAll();
                                 <i class="fas fa-download"></i> Download Template
                             </button>
                             <button type="button" id="btn_import_excel" class="btn-import-compact">
-                                <i class="fas fa-file-upload"></i> Import Excel
+                                <i class="fas fa-file-upload"></i> Import Excel(s)
                             </button>
-                            <input type="file" id="dtr_excel_file" accept=".xlsx,.xls,.xlsm,.csv" style="display: none;">
+                            <input type="file" id="dtr_excel_file" accept=".xlsx,.xls,.xlsm,.csv" style="display: none;" multiple>
                         </div>
                         
                         <!-- File Selected Preview -->
@@ -93,7 +93,7 @@ $payroll_periods = $stmt->fetchAll();
                         </div>
                         <div class="info-row">
                             <div class="info-field">
-                                <label>Basic Monthly Salary <span class="required">*</span></label>
+                                <label>Basic Monthly Salary (Optional)</label>
                                 <input type="number" id="imported_salary" class="form-control" placeholder="13000" step="0.01">
                             </div>
                             <div class="info-field">
@@ -124,41 +124,42 @@ $payroll_periods = $stmt->fetchAll();
                                 </div>
                             </div>
                             <div class="info-field">
-                                <label>No. of Trainings</label>
-                                <input type="number" id="imported_trainings_count" class="form-control" value="0" min="0" oninput="calculateTraineePayment()">
-                            </div>
-                            <div class="info-field">
-                                <label>Payment Per Trainee</label>
+                                <label>Training Amount</label>
                                 <div class="input-with-prefix">
                                     <span class="prefix">₱</span>
-                                    <input type="number" id="imported_payment_per_trainee" class="form-control" value="0" step="0.01" min="0" oninput="calculateTraineePayment()">
+                                    <input type="number" id="imported_training_amount" class="form-control" value="0" step="0.01" min="0" oninput="syncImportedTrainingAmount()" style="border: 3px solid #718096;">
                                 </div>
                             </div>
-                            <div class="info-field">
-                                <label>Total Cost Trainings</label>
-                                <div class="input-with-prefix">
-                                    <span class="prefix">₱</span>
-                                    <input type="number" id="imported_trainings_cost" class="form-control" value="0" step="0.01" min="0" readonly>
-                                </div>
+                            <div class="info-field" style="flex: 1.5;">
+                                <label>Training Remarks</label>
+                                <input type="text" id="imported_training_remarks" class="form-control" value="" oninput="syncImportedTrainingRemarks()" placeholder="Enter remarks" style="border: 3px solid #718096;">
                             </div>
                         </div>
                         
                         <!-- Net Pay Summary -->
                         <div class="net-pay-summary">
                             <div class="net-pay-item">
-                                <span class="label">Total Deductions:</span>
-                                <span class="value deductions" id="summary_total_deductions">₱0.00</span>
+                                <span class="label">Total Salary (Per Day):</span>
+                                <span class="value earnings" id="summary_total_salary">₱0.00</span>
                             </div>
                             <div class="net-pay-item">
                                 <span class="label">OT Pay:</span>
                                 <span class="value earnings" id="summary_ot_pay">₱0.00</span>
                             </div>
                             <div class="net-pay-item">
-                                <span class="label">Trainee Payment:</span>
+                                <span class="label">Training Payment:</span>
                                 <span class="value earnings" id="summary_trainee_payment">₱0.00</span>
                             </div>
+                            <div class="net-pay-item">
+                                <span class="label">Total Gross Pay:</span>
+                                <span class="value earnings" id="summary_gross_pay" style="font-weight:bold;">₱0.00</span>
+                            </div>
+                            <div class="net-pay-item">
+                                <span class="label">Gov't Benefits:</span>
+                                <span class="value deductions" id="summary_govt_deductions">₱0.00</span>
+                            </div>
                             <div class="net-pay-item net-pay-final">
-                                <span class="label">NET PAY:</span>
+                                <span class="label">TAKE HOME:</span>
                                 <span class="value" id="summary_net_pay">₱0.00</span>
                             </div>
                         </div>
@@ -188,14 +189,26 @@ $payroll_periods = $stmt->fetchAll();
                             <label for="employee_select">Employee</label>
                             <select id="employee_select" name="employee_id" class="form-control">
                                 <option value=""> Select Employee </option>
-                                <?php foreach ($employees as $employee): ?>
+                                <?php 
+                                // Employee Classification System:
+                                // - 'fixedrate': Regular employees - uses detailed DTR with hourly/daily rate calculations
+                                // - 'trainee': Trainee/Trainer employees - uses simplified daily rate calculations
+                                // Classification is derived from the position field (checking for 'trainee' or 'trainer' keywords)
+                                // This controls which payroll tab will be enabled for each employee
+                                
+                                foreach ($employees as $employee): 
+                                    // Determine employee classification from the actual classification column
+                                    $emp_classification = strtolower(trim($employee['classification'] ?? ''));
+                                    $classification = ($emp_classification === 'trainer') ? 'trainer' : 'fixedrate';
+                                ?>
                                     <option value="<?php echo $employee['id']; ?>" 
                                             data-code="<?php echo htmlspecialchars($employee['employee_code']); ?>"
                                             data-name="<?php echo htmlspecialchars($employee['full_name']); ?>"
                                             data-position="<?php echo htmlspecialchars($employee['position']); ?>"
                                             data-department="<?php echo htmlspecialchars($employee['department']); ?>"
-                                            data-salary="<?php echo $employee['basic_monthly_salary']; ?>">
-                                        <?php echo htmlspecialchars($employee['full_name']) . ' (' . htmlspecialchars($employee['employee_code']) . ')'; ?>
+                                            data-salary="<?php echo $employee['basic_monthly_salary']; ?>"
+                                            data-classification="<?php echo $classification; ?>">
+                                        <?php echo htmlspecialchars($employee['full_name']) . ' (' . htmlspecialchars($employee['employee_code']) . ') - [' . strtoupper($classification) . ']'; ?>
                                     </option>
                                 <?php endforeach; ?>
                             </select>
@@ -230,14 +243,14 @@ $payroll_periods = $stmt->fetchAll();
                                 </select>
                                 <select id="payroll_cutoff" class="form-control" onchange="updatePayrollPeriod()">
                                     <option value="">Cut-off</option>
-                                    <option value="12">12th (1-15 period)</option>
-                                    <option value="27">27th (16-end period)</option>
+                                    <option value="12">1st Cut-off (1–15)</option>
+                                    <option value="27">2nd Cut-off (16–31)</option>
                                 </select>
                             </div>
                             <input type="hidden" id="calculated_start_date" name="period_start_date">
                             <input type="hidden" id="calculated_end_date" name="period_end_date">
                             <input type="hidden" id="calculated_pay_date" name="calculated_pay_date">
-                            <small style="display: block; margin-top: 5px; color: #666;">Select year, month, and pay date (12th for 1-15 period, 27th for 16-last day period)</small>
+                            <small style="display: block; margin-top: 5px; color: #666;">Select year, month, and cut-off (1st: 1–15, 2nd: 16–last day)</small>
                         </div>
                     </div>
                 </div>
@@ -246,17 +259,40 @@ $payroll_periods = $stmt->fetchAll();
 
             <!-- Payslip Form Template -->
             <div id="payslip_form" class="payslip-form" style="display: none;">
+
+                <!-- ===== MULTI-EMPLOYEE TAB BAR ===== -->
+                <div id="employee_tabs_bar" class="employee-tabs-bar" style="display: none;">
+                    <div class="employee-tabs-header">
+                        <div class="employee-tabs-label"><i class="fas fa-users"></i> Imported Employees</div>
+                        <div class="employee-tabs-actions">
+                            <button type="button" class="btn-add-more-import" onclick="document.getElementById('dtr_excel_file').click();" title="Import another Excel">
+                                <i class="fas fa-plus"></i> Add More
+                            </button>
+                        </div>
+                    </div>
+                    <div class="employee-tabs-list" id="employee_tabs_list">
+                        <!-- Tabs will be generated dynamically -->
+                    </div>
+                </div>
+
                 <form id="payroll_form" method="POST" action="process_payroll.php">
                     <input type="hidden" name="employee_id" id="form_employee_id">
                     <input type="hidden" name="payroll_period_id" id="form_payroll_period_id">
 
                         <!-- DTR Section -->
+                        <div id="dtr_tab_fixedrate" class="dtr-tab-content active">
+                        <!-- DTR Section -->
                         <div class="dtr-section">
                             <div class="dtr-header-tb5">
-                                <div class="tb5-title">DTR CALCULATOR</div>
-                                <button type="button" id="btn_dtr_full_view" class="btn-full-view" onclick="openDTRFullView()" title="View Full DTR Table">
-                                    <i class="fas fa-expand-arrows-alt"></i> Full View
-                                </button>
+                                <div class="tb5-title">DTR CALCULATOR - FIXED RATE</div>
+                                <div class="dtr-header-actions">
+                                    <button type="button" id="btn_export_dtr_excel" class="btn-export-excel" onclick="exportDTRToExcel()" title="Export DTR to Excel">
+                                        <i class="fas fa-file-excel"></i> Export Excel
+                                    </button>
+                                    <button type="button" id="btn_dtr_full_view" class="btn-full-view" onclick="openDTRFullView()" title="View Full DTR Table">
+                                        <i class="fas fa-expand-arrows-alt"></i> Full View
+                                    </button>
+                                </div>
                             </div>
                             
                             <!-- TB5 Employee & Rate Info Row -->
@@ -272,54 +308,66 @@ $payroll_periods = $stmt->fetchAll();
                             
                             <!-- TB5 Rate Calculation Row -->
                             <div class="tb5-rate-row">
-                                <div class="tb5-rate-item rate-input-item">
+                                <div class="tb5-rate-item rate-input-item" id="basic_salary_container">
                                     <span class="tb5-rate-label">BASIC SALARY</span>
                                     <div class="rate-input-wrapper">
                                         <span class="peso-sign">₱</span>
-                                        <input type="number" id="basic_monthly_salary" name="basic_monthly_salary" 
-                                               class="rate-input tb5-basic-input" value="13000" step="100" 
-                                               oninput="updateAllRates()">
+                                        <input type="text" id="basic_monthly_salary" name="basic_monthly_salary" 
+                                               class="rate-input tb5-basic-input" value="" 
+                                               onblur="formatBasicSalaryWithCommas(this)"
+                                               title="Basic Monthly Salary (reference only — does not affect rate calculations)">
                                     </div>
                                 </div>
                                 <div class="tb5-rate-item rate-input-item">
                                     <span class="tb5-rate-label">PER/DAY</span>
                                     <div class="rate-input-wrapper">
                                         <span class="peso-sign">₱</span>
-                                        <input type="number" id="daily_rate" name="daily_rate_value" 
-                                               class="rate-input" value="433.33" step="0.01" 
-                                               oninput="updateRatesFromDaily()">
+                                        <input type="text" id="daily_rate" name="daily_rate_value" 
+                                               class="rate-input" value="" 
+                                               oninput="updateRatesFromDaily()" 
+                                               onblur="formatDailyRateWithCommas(this)">
                                     </div>
                                 </div>
                                 <div class="tb5-rate-item">
                                     <span class="tb5-rate-label">PER/HOUR</span>
                                     <div class="computed-rate">
-                                        <span>₱</span><span id="hourly_rate">54.17</span>
+                                        <span>₱</span><span id="hourly_rate">0.00</span>
                                     </div>
-                                    <input type="hidden" name="hourly_rate_value" id="hourly_rate_value" value="54.17">
+                                    <input type="hidden" name="hourly_rate_value" id="hourly_rate_value" value="0.00">
                                 </div>
                                 <div class="tb5-rate-item">
                                     <span class="tb5-rate-label">PER/MIN</span>
                                     <div class="computed-rate">
-                                        <span>₱</span><span id="minute_rate">0.9028</span>
+                                        <span>₱</span><span id="minute_rate">0.0000</span>
                                     </div>
-                                    <input type="hidden" name="minute_rate_value" id="minute_rate_value" value="0.9028">
+                                    <input type="hidden" name="minute_rate_value" id="minute_rate_value" value="0.0000">
                                 </div>
-                                <div class="tb5-rate-item rate-input-item">
+                                <div class="tb5-rate-item rate-input-item" id="ot_rate_container">
                                     <span class="tb5-rate-label">OT RATE</span>
                                     <div class="rate-input-wrapper">
                                         <span class="peso-sign">₱</span>
                                         <input type="number" id="ot_rate" name="ot_rate_value" 
-                                               class="rate-input" value="67.71" step="0.01" 
+                                               class="rate-input" value="" step="0.01" 
                                                oninput="updateOTRate()">
                                     </div>
                                 </div>
                                 <div class="tb5-rate-item">
-                                    <span class="tb5-rate-label">LATE START</span>
-                                    <input type="text" id="late_threshold" name="late_threshold" value="7:35" class="time-input time24" autocomplete="off" placeholder="7:35" maxlength="5" oninput="formatTime24(this)" onchange="recalculateAllRows()">
+                                    <span class="tb5-rate-label">TIME START</span>
+                                    <input type="text" id="late_threshold" name="late_threshold" value="8:00" class="time-input time24" autocomplete="off" placeholder="8:00" maxlength="5" oninput="formatTime24(this)" onchange="recalculateAllRows()">
                                 </div>
                                 <div class="tb5-rate-item">
                                     <span class="tb5-rate-label">END TIME</span>
                                     <input type="text" id="end_threshold" name="end_threshold" value="17:00" class="time-input time24" autocomplete="off" placeholder="17:00" maxlength="5" oninput="formatTime24(this)" onchange="recalculateAllRows()">
+                                </div>
+                                <div class="tb5-rate-item tb5-switch-item">
+                                    <span class="tb5-rate-label">DAY OVR EDIT</span>
+                                    <div class="segment-switch-wrap" title="Edit Per/Day, Time Start, and End Time for checked DAY OVR rows">
+                                        <input type="checkbox" id="checked_days_mode_switch" class="simple-switch-input" hidden>
+                                        <div class="segment-switch-track" role="group" aria-label="Toggle checked days edit mode">
+                                            <button type="button" id="checked_days_default_btn" class="segment-option segment-btn active" onclick="setCheckedDaysMode(false)">Default</button>
+                                            <button type="button" id="checked_days_checked_btn" class="segment-option segment-btn" onclick="setCheckedDaysMode(true)">Checked</button>
+                                        </div>
+                                    </div>
                                 </div>
                             </div>
 
@@ -327,17 +375,18 @@ $payroll_periods = $stmt->fetchAll();
                             <table class="dtr-table" id="main_dtr_table">
                                 <thead>
                                     <tr>
+                                        <th rowspan="3" class="th-single th-day-override">DAY<br>OVR</th>
                                         <th rowspan="3" class="th-date">MO/YR<br>DATE</th>
                                         <th rowspan="3" class="th-group th-am">AM IN</th>
                                         <th rowspan="3" class="th-group th-pm">PM OUT</th>
                                         <th rowspan="3" class="th-single th-absent-col">ABSENT</th>
+                                        <th rowspan="3" class="th-single th-training-col">TRAINING</th>
                                         <th rowspan="3" class="th-single th-ot-col">OT<br>OUT</th>
                                         <th rowspan="3" class="th-calc">TOT.WORK<br>(in hours)</th>
                                         <th rowspan="3" class="th-calc">LATE<br>(in mins)</th>
                                         <th rowspan="3" class="th-calc">UNDERTIME<br>(in hours)</th>
                                         <th rowspan="3" class="th-calc">OT<br>(in hours)</th>
                                         <th rowspan="3" class="th-single">ABSENT<br>(in days)</th>
-                                        <th rowspan="3" class="th-deduct">ABSENT<br>DEDUCT</th>
                                         <th rowspan="3" class="th-deduct">LATE<br>DEDUCT</th>
                                         <th rowspan="3" class="th-deduct">UNDERTIME<br>DEDUCT</th>
                                         <th rowspan="3" class="th-deduct">HALFDAY<br>DEDUCT</th>
@@ -346,8 +395,6 @@ $payroll_periods = $stmt->fetchAll();
                                         <th colspan="3" class="th-group th-auto-calc">AUTOMATIC CALCULATIONS</th>
                                         <th rowspan="3" class="th-manual">Government<br>Benefits</th>
                                         <th rowspan="3" class="th-auto-salary">Net<br>Salary</th>
-                                        <th rowspan="3" class="th-f1">F1*</th>
-                                        <th rowspan="3" class="th-f2">F2*</th>
                                         <th rowspan="3" class="th-remarks">REMARKS</th>
                                         <th rowspan="3" class="th-action">ACTIONS</th>
                                     </tr>
@@ -362,13 +409,13 @@ $payroll_periods = $stmt->fetchAll();
                                 </tbody>
                                 <tfoot>
                                     <tr class="totals-row">
-                                        <td colspan="5" class="totals-label">TOTALS:</td>
+                                        <td colspan="6" class="totals-label">TOTALS:</td>
+                                        <td></td>
                                         <td id="total_work_mins">0</td>
                                         <td id="total_late_hours">0.00</td>
                                         <td id="total_undertime">0.00</td>
                                         <td id="total_ot_hours">0.00</td>
                                         <td id="total_absent_days">0</td>
-                                        <td id="total_absent_deduct">0.00</td>
                                         <td id="total_late_deduct">0.00</td>
                                         <td id="total_undertime_deduct">0.00</td>
                                         <td id="total_halfday_deduct">0.00</td>
@@ -379,14 +426,69 @@ $payroll_periods = $stmt->fetchAll();
                                         <td id="total_ot_calc">0.00</td>
                                         <td id="total_govt">0.00</td>
                                         <td id="total_salary">0.00</td>
-                                        <td id="total_f1"></td>
-                                        <td id="total_f2"></td>
                                         <td></td>
                                         <td></td>
                                     </tr>
                                 </tfoot>
                             </table>
                         </div>
+                        </div>
+
+                        <!-- Trainee Payment Section -->
+                        <div class="trainee-payment-card" id="trainee_payment_card" style="margin-top: 20px;">
+                            <div class="trainee-card-header">
+                                <h3>
+                                    <i class="fas fa-users"></i>
+                                    Training Payment
+                                </h3>
+                                <span class="trainee-badge">Additional Earnings</span>
+                            </div>
+                            <div class="trainee-card-body">
+                                <div class="trainee-info-text">
+                                    <i class="fas fa-info-circle"></i>
+                                    Enter trainee-related compensation that will be added to the net pay for this payroll period.
+                                </div>
+                                <div class="trainee-form-row">
+                                    <div class="trainee-input-group">
+                                        <label for="training_amount_main">
+                                            <i class="fas fa-peso-sign"></i>
+                                            Amount
+                                        </label>
+                                        <div class="input-with-prefix">
+                                            <span class="prefix">₱</span>
+                                            <input type="text" 
+                                                   id="training_amount_main" 
+                                                   name="training_amount_main" 
+                                                   class="trainee-input trainee-amount-input" 
+                                                   value="0.00" 
+                                                   oninput="syncTrainingAmountSimple()"
+                                                   onblur="formatTrainingAmount(this)"
+                                                   placeholder="0.00"
+                                                   style="padding: 10px 12px 10px 32px; border: 3px solid #718096;">
+                                        </div>
+                                    </div>
+                                    
+                                    <div class="trainee-input-group" style="flex: 2;">
+                                        <label for="training_remarks_main">
+                                            <i class="fas fa-comment"></i>
+                                            Remarks
+                                        </label>
+                                        <input type="text" 
+                                               id="training_remarks_main" 
+                                               name="training_remarks_main" 
+                                               class="trainee-input" 
+                                               value="" 
+                                               oninput="syncTrainingRemarks()"
+                                               placeholder="Enter remarks or notes"
+                                               style="padding: 10px 12px; border: 3px solid #718096;">
+                                    </div>
+                                </div>
+                                
+                                <div class="trainee-impact-notice">
+                                    <i class="fas fa-arrow-up"></i>
+                                    This amount will be <strong>added</strong> to the final net pay calculation.
+                                </div>
+                            </div>
                         </div>
 
                         <!-- Save to Payroll Action Bar -->
@@ -404,86 +506,15 @@ $payroll_periods = $stmt->fetchAll();
                                 <button type="button" id="btn_save_main_dtr" class="btn-save-payroll" onclick="saveMainDTRToDatabase()">
                                     <i class="fas fa-save"></i> Save to Payroll List
                                 </button>
-                            </div>
-                        </div>
-
-                        <!-- Trainee Payment Section -->
-                        <div class="trainee-payment-card" id="trainee_payment_card" style="margin-top: 20px;">
-                            <div class="trainee-card-header">
-                                <h3>
-                                    <i class="fas fa-users"></i>
-                                    Trainee Payment
-                                </h3>
-                                <span class="trainee-badge">Additional Earnings</span>
-                            </div>
-                            <div class="trainee-card-body">
-                                <div class="trainee-info-text">
-                                    <i class="fas fa-info-circle"></i>
-                                    Enter trainee-related compensation that will be added to the net pay for this payroll period.
-                                </div>
-                                <div class="trainee-form-row">
-                                    <div class="trainee-input-group">
-                                        <label for="trainee_count_main">
-                                            <i class="fas fa-user-graduate"></i>
-                                            Number of Trainees
-                                        </label>
-                                        <input type="number" 
-                                               id="trainee_count_main" 
-                                               name="trainee_count_main" 
-                                               class="trainee-input" 
-                                               value="0" 
-                                               min="0" 
-                                               step="1"
-                                               oninput="calculateMainTraineePayment()"
-                                               placeholder="0">
-                                    </div>
-                                    
-                                    <div class="trainee-input-group">
-                                        <label for="trainee_payment_per_main">
-                                            <i class="fas fa-peso-sign"></i>
-                                            Payment Per Trainee
-                                        </label>
-                                        <div class="input-with-prefix">
-                                            <span class="prefix">₱</span>
-                                            <input type="number" 
-                                                   id="trainee_payment_per_main" 
-                                                   name="trainee_payment_per_main" 
-                                                   class="trainee-input" 
-                                                   value="0.00" 
-                                                   min="0" 
-                                                   step="0.01"
-                                                   oninput="calculateMainTraineePayment()"
-                                                   placeholder="0.00">
-                                        </div>
-                                    </div>
-                                    
-                                    <div class="trainee-input-group trainee-total-group">
-                                        <label for="trainee_total_main">
-                                            <i class="fas fa-calculator"></i>
-                                            Total Trainee Payment
-                                        </label>
-                                        <div class="trainee-total-display">
-                                            <span class="currency-symbol">₱</span>
-                                            <input type="number" 
-                                                   id="trainee_total_main" 
-                                                   name="trainee_total_main" 
-                                                   class="trainee-input trainee-total-input" 
-                                                   value="0.00" 
-                                                   readonly
-                                                   placeholder="0.00">
-                                        </div>
-                                        <small class="field-hint">Auto-calculated: Count × Payment</small>
-                                    </div>
-                                </div>
-                                
-                                <div class="trainee-impact-notice">
-                                    <i class="fas fa-arrow-up"></i>
-                                    This amount will be <strong>added</strong> to the final net pay calculation.
-                                </div>
+                                <button type="button" id="btn_save_all_dtr" class="btn-save-payroll btn-save-all" onclick="saveAllDTRToDatabase()" style="display: none; margin-left: 8px; background: linear-gradient(135deg, #38a169, #2f855a);">
+                                    <i class="fas fa-save"></i> Save All (<span id="save_all_count">0</span>) to Payroll
+                                </button>
                             </div>
                         </div>
                         
                         <!-- End DTR Section -->
+                        </div>
+
                     </div>
                 </form>
             </div>
@@ -494,6 +525,132 @@ $payroll_periods = $stmt->fetchAll();
 <style>
 .payroll-container {
     margin-top: 20px;
+}
+
+/* ===== MULTI-EMPLOYEE TAB BAR STYLES ===== */
+.employee-tabs-bar {
+    background: #fff;
+    border: 1px solid #e2e8f0;
+    border-radius: 10px 10px 0 0;
+    margin-bottom: 0;
+    box-shadow: 0 2px 8px rgba(0,0,0,0.06);
+    overflow: hidden;
+}
+.employee-tabs-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 10px 20px;
+    background: linear-gradient(135deg, #2d3748 0%, #1a202c 100%);
+    color: #fff;
+}
+.employee-tabs-label {
+    font-size: 14px;
+    font-weight: 600;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+.employee-tabs-actions {
+    display: flex;
+    gap: 8px;
+}
+.btn-add-more-import {
+    padding: 5px 14px;
+    background: rgba(255,255,255,0.15);
+    color: #fff;
+    border: 1px solid rgba(255,255,255,0.3);
+    border-radius: 6px;
+    font-size: 12px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+}
+.btn-add-more-import:hover {
+    background: rgba(255,255,255,0.25);
+    border-color: rgba(255,255,255,0.5);
+}
+.employee-tabs-list {
+    display: flex;
+    gap: 0;
+    overflow-x: auto;
+    padding: 0;
+    background: #f7fafc;
+    border-bottom: 2px solid #e2e8f0;
+}
+.employee-tab {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 10px 20px;
+    cursor: pointer;
+    border: none;
+    background: transparent;
+    color: #4a5568;
+    font-size: 13px;
+    font-weight: 500;
+    white-space: nowrap;
+    border-bottom: 3px solid transparent;
+    transition: all 0.2s ease;
+    position: relative;
+}
+.employee-tab:hover {
+    background: #edf2f7;
+    color: #2d3748;
+}
+.employee-tab.active {
+    background: #fff;
+    color: #2b6cb0;
+    border-bottom-color: #3182ce;
+    font-weight: 600;
+}
+.employee-tab .tab-emp-name {
+    max-width: 180px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+.employee-tab .tab-status {
+    width: 8px;
+    height: 8px;
+    border-radius: 50%;
+    background: #cbd5e0;
+    flex-shrink: 0;
+}
+.employee-tab.active .tab-status {
+    background: #38a169;
+}
+.employee-tab .tab-saved-badge {
+    background: #c6f6d5;
+    color: #22543d;
+    font-size: 10px;
+    padding: 1px 6px;
+    border-radius: 10px;
+    font-weight: 700;
+}
+.employee-tab .tab-close {
+    width: 18px;
+    height: 18px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    font-size: 11px;
+    color: #a0aec0;
+    cursor: pointer;
+    transition: all 0.15s;
+    flex-shrink: 0;
+}
+.employee-tab .tab-close:hover {
+    background: #fed7d7;
+    color: #c53030;
+}
+.btn-save-all {
+    display: inline-flex !important;
+    align-items: center;
+    gap: 5px;
 }
 
 /* Compact Modern Import Card */
@@ -785,8 +942,8 @@ $payroll_periods = $stmt->fetchAll();
 .trainee-payment-card {
     background: #fff;
     border-radius: 8px;
-    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
-    border: 2px solid #4299e1;
+    box-shadow: 0 4px 12px rgba(66, 153, 225, 0.25);
+    border: 3px solid #4299e1;
     overflow: hidden;
 }
 
@@ -873,16 +1030,21 @@ $payroll_periods = $stmt->fetchAll();
 
 .trainee-input {
     padding: 10px 12px;
-    border: 2px solid #e2e8f0;
+    border: 3px solid #718096;
     border-radius: 6px;
     font-size: 14px;
     transition: all 0.2s;
 }
 
 .trainee-input:focus {
-    border-color: #4299e1;
+    border-color: #4a5568;
     outline: none;
-    box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.1);
+    box-shadow: 0 0 0 4px rgba(113, 128, 150, 0.25);
+}
+
+.trainee-amount-input:focus {
+    border-color: #4a5568 !important;
+    box-shadow: 0 0 0 4px rgba(113, 128, 150, 0.3) !important;
 }
 
 .trainee-input::placeholder {
@@ -1415,6 +1577,12 @@ $payroll_periods = $stmt->fetchAll();
     box-shadow: 0 0 0 3px rgba(66, 153, 225, 0.1);
 }
 
+/* Employee Select with Classification */
+#employee_select option {
+    padding: 10px;
+    font-size: 14px;
+}
+
 /* Payslip Form Styling */
 .payslip-form {
     background: #ffffff;
@@ -1669,6 +1837,12 @@ $payroll_periods = $stmt->fetchAll();
     color: #333;
 }
 
+/* TB5 Color Scheme - Training Column (Teal) */
+.dtr-table .th-training-col {
+    background: #319795 !important;
+    color: #fff !important;
+}
+
 /* TB5 Color Scheme - Absent Column (Red/Pink) */
 .dtr-table .th-absent-col {
     background: #FF9999;
@@ -1741,14 +1915,6 @@ $payroll_periods = $stmt->fetchAll();
     background: #CCFFCC;
     color: #333;
     min-width: 85px;
-}
-
-/* New columns - F1 and F2 */
-.dtr-table .th-f1,
-.dtr-table .th-f2 {
-    background: #ffffff;
-    color: #333;
-    min-width: 60px;
 }
 
 /* New columns - Remarks */
@@ -1952,13 +2118,6 @@ $payroll_periods = $stmt->fetchAll();
     background: #CCFFCC !important;
     font-weight: 500;
     min-width: 85px;
-}
-
-.dtr-table .dtr-f-input {
-    text-align: center;
-    font-size: 11px;
-    text-transform: uppercase;
-    min-width: 60px;
 }
 
 .dtr-table .dtr-remarks-input {
@@ -2211,6 +2370,17 @@ $payroll_periods = $stmt->fetchAll();
     background-color: #ccffcc !important; /* Green for OT pay */
 }
 
+/* Hide MINUS OT TOTAL DEDUCTIONS column (16th) - column still computed, just not displayed */
+/* Use tbody-scoped selector so tfoot colspan does not shift nth-child counting */
+.dtr-table th:nth-child(16),
+.dtr-table tbody td:nth-child(16) {
+    display: none !important;
+}
+/* Hide total_net_deductions cell in tfoot by ID (nth-child cannot be used there due to colspan) */
+#total_net_deductions {
+    display: none !important;
+}
+
 .net-deduct-highlight {
     background-color: #fff3cd !important; /* Light yellow for net deductions */
     font-weight: 600;
@@ -2315,6 +2485,46 @@ $payroll_periods = $stmt->fetchAll();
 }
 
 .btn-full-view i {
+    font-size: 12px;
+}
+
+/* DTR Header Actions Container */
+.dtr-header-actions {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+/* Export Excel Button */
+.btn-export-excel {
+    background: linear-gradient(135deg, #217346 0%, #185C37 100%);
+    color: white;
+    border: none;
+    padding: 8px 16px;
+    border-radius: 6px;
+    font-size: 13px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 6px;
+}
+
+.btn-export-excel:hover {
+    background: linear-gradient(135deg, #185C37 0%, #0E4023 100%);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 8px rgba(0,0,0,0.2);
+}
+
+.btn-export-excel:disabled {
+    opacity: 0.7;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+.btn-export-excel i {
     font-size: 12px;
 }
 
@@ -2963,6 +3173,102 @@ input.time24:focus {
 
 .time-input:focus {
     animation: timePulse 2s ease-in-out infinite;
+}
+
+/* Day OVR segmented switch (inline so it always applies on this page) */
+.tb5-switch-item {
+    min-width: 220px;
+}
+
+.tb5-switch-item .segment-switch-wrap {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.tb5-switch-item .simple-switch-input {
+    position: absolute;
+    opacity: 0;
+    pointer-events: none;
+}
+
+.tb5-switch-item .segment-switch-track {
+    position: relative;
+    width: 192px;
+    height: 46px;
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    align-items: stretch;
+    overflow: hidden;
+    border: 1px solid #c8cdd4;
+    border-radius: 13px;
+    background: linear-gradient(180deg, #eef2f7 0%, #d8dee7 100%);
+    box-shadow: 0 4px 10px rgba(0, 0, 0, 0.18), inset 0 1px 0 rgba(255, 255, 255, 0.7);
+}
+
+.tb5-switch-item .segment-switch-track::before {
+    content: '';
+    position: absolute;
+    top: 1px;
+    left: 0;
+    width: 50%;
+    height: calc(100% - 2px);
+    z-index: 1;
+    border-radius: 12px;
+    background: linear-gradient(180deg, #ffdca8 0%, #ffc977 100%);
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.7), 0 2px 6px rgba(0, 0, 0, 0.12);
+    transition: transform 0.35s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.25s ease;
+}
+
+.tb5-switch-item .segment-switch-track.checked-mode::before {
+    transform: translateX(100%);
+    background: linear-gradient(180deg, #9dd3ff 0%, #6eb8ff 100%);
+}
+
+.tb5-switch-item .segment-option,
+.tb5-switch-item .segment-btn {
+    z-index: 2;
+    height: 100%;
+    border: 0;
+    margin: 0;
+    padding: 0;
+    cursor: pointer;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    user-select: none;
+    background: transparent;
+    color: #2f3a47;
+    font-size: 14px;
+    font-weight: 700;
+    line-height: 1;
+    appearance: none;
+    -webkit-appearance: none;
+    box-shadow: none;
+    text-shadow: none;
+    transition: color 0.25s ease, transform 0.15s ease;
+}
+
+.tb5-switch-item .segment-btn:hover {
+    transform: translateY(-1px);
+}
+
+.tb5-switch-item .segment-btn.active {
+    color: #0f172a;
+    text-shadow: 0 1px 0 rgba(255, 255, 255, 0.65);
+}
+
+.tb5-switch-item .segment-btn#checked_days_default_btn.active {
+    color: #7a3f00;
+}
+
+.tb5-switch-item .segment-btn#checked_days_checked_btn.active {
+    color: #0b3d74;
+}
+
+.tb5-switch-item .segment-btn:focus-visible {
+    outline: 2px solid #60a5fa;
+    outline-offset: 2px;
 }
 
 /* 24-hour time input styling - Modern Design */
@@ -3617,6 +3923,15 @@ input.time24:valid:not(:placeholder-shown):not(:focus) {
     letter-spacing: 0.5px;
 }
 
+.date-weekday {
+    font-size: 8px;
+    color: #4a5568;
+    margin-top: 2px;
+    text-transform: uppercase;
+    letter-spacing: 0.3px;
+    font-weight: 600;
+}
+
 /* ============ Old Custom 24-Hour Time Picker - Disabled ============ 
    Now using HTML5 native type="time" inputs for better compatibility 
 */
@@ -3896,6 +4211,134 @@ input.time24:disabled {
     background: #2563eb;
 }
 
+/* ===== CUSTOM MODAL STYLES ===== */
+.custom-modal-overlay {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.6);
+    backdrop-filter: blur(4px);
+    display: none;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    animation: fadeIn 0.2s ease;
+}
+.custom-modal-overlay.active {
+    display: flex;
+}
+@keyframes fadeIn {
+    from { opacity: 0; }
+    to { opacity: 1; }
+}
+@keyframes slideIn {
+    from { 
+        opacity: 0;
+        transform: translateY(-20px) scale(0.95);
+    }
+    to { 
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+.custom-modal {
+    background: #fff;
+    border-radius: 16px;
+    box-shadow: 0 20px 60px rgba(0, 0, 0, 0.3);
+    max-width: 500px;
+    width: 90%;
+    overflow: hidden;
+    animation: slideIn 0.3s cubic-bezier(0.34, 1.56, 0.64, 1);
+}
+.custom-modal-header {
+    padding: 24px 28px;
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+    color: #fff;
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+.custom-modal-header i {
+    font-size: 28px;
+    animation: pulse 2s ease-in-out infinite;
+}
+@keyframes pulse {
+    0%, 100% { transform: scale(1); }
+    50% { transform: scale(1.1); }
+}
+.custom-modal-header h3 {
+    margin: 0;
+    font-size: 19px;
+    font-weight: 600;
+}
+.custom-modal-body {
+    padding: 32px 28px;
+    font-size: 15px;
+    color: #2d3748;
+    line-height: 1.6;
+}
+.custom-modal-body strong {
+    color: #1a202c;
+    font-weight: 600;
+}
+.custom-modal-footer {
+    padding: 20px 28px;
+    background: #f7fafc;
+    display: flex;
+    gap: 12px;
+    justify-content: flex-end;
+    border-top: 1px solid #e2e8f0;
+}
+.modal-btn {
+    padding: 12px 28px;
+    border: none;
+    border-radius: 10px;
+    font-size: 14px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+.modal-btn-primary {
+    background: linear-gradient(135deg, #10b981, #059669);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(16, 185, 129, 0.3);
+}
+.modal-btn-primary:hover {
+    box-shadow: 0 6px 20px rgba(16, 185, 129, 0.5);
+    transform: translateY(-2px);
+}
+.modal-btn-primary:active {
+    transform: translateY(0);
+}
+.modal-btn-secondary {
+    background: linear-gradient(135deg, #ef4444, #dc2626);
+    color: #fff;
+    box-shadow: 0 4px 12px rgba(239, 68, 68, 0.3);
+}
+.modal-btn-secondary:hover {
+    box-shadow: 0 6px 20px rgba(239, 68, 68, 0.5);
+    transform: translateY(-2px);
+}
+.modal-btn-secondary:active {
+    transform: translateY(0);
+}
+.custom-modal.success .custom-modal-header {
+    background: linear-gradient(135deg, #48bb78, #38a169);
+}
+.custom-modal.warning .custom-modal-header {
+    background: linear-gradient(135deg, #f59e0b, #d97706);
+}
+.custom-modal.error .custom-modal-header {
+    background: linear-gradient(135deg, #f56565, #e53e3e);
+}
+
 </style>
 
 <script>
@@ -3903,6 +4346,814 @@ input.time24:disabled {
 // PAYROLL MODE TOGGLE - Import Excel vs Manual Entry
 // ================================================================
 let currentPayrollMode = 'import'; // 'import' or 'manual'
+
+// ================================================================
+// MULTI-EMPLOYEE TAB MANAGEMENT
+// ================================================================
+// Stores all imported employee DTR data, keyed by a unique tabId
+// Each entry: { tabId, employeeName, salary, periodStart, periodEnd, 
+//               dtrRowsHTML, totalsState, importData, classification, 
+//               trainingAmount, trainingRemarks, scheduleThresholds, saved }
+const employeeTabs = {};
+let activeTabId = null;
+let tabCounter = 0;
+
+// ================================================================
+// LOCAL STORAGE PERSISTENCE FOR EMPLOYEE TABS
+// ================================================================
+const LS_KEY_TABS = 'dtr_employee_tabs';
+const LS_KEY_ACTIVE = 'dtr_active_tab';
+const LS_KEY_COUNTER = 'dtr_tab_counter';
+
+/**
+ * Save all employee tab data to localStorage
+ */
+function saveTabsToLocalStorage() {
+    try {
+        // Save current active tab state first
+        if (activeTabId && employeeTabs[activeTabId]) {
+            saveCurrentTabState();
+        }
+        
+        // Build serializable version of employeeTabs
+        const serializable = {};
+        for (const [tabId, tab] of Object.entries(employeeTabs)) {
+            serializable[tabId] = {
+                tabId: tab.tabId,
+                employeeName: tab.employeeName,
+                salary: tab.salary,
+                periodStart: tab.periodStart,
+                periodEnd: tab.periodEnd,
+                importData: tab.importData,
+                classification: tab.classification,
+                trainingAmount: tab.trainingAmount,
+                trainingRemarks: tab.trainingRemarks,
+                scheduleThresholds: tab.scheduleThresholds,
+                saved: tab.saved,
+                snapshotHTML: tab.snapshotHTML,
+                snapshotState: tab.snapshotState
+            };
+        }
+        
+        localStorage.setItem(LS_KEY_TABS, JSON.stringify(serializable));
+        localStorage.setItem(LS_KEY_ACTIVE, activeTabId || '');
+        localStorage.setItem(LS_KEY_COUNTER, tabCounter.toString());
+    } catch (e) {
+        console.warn('Failed to save tabs to localStorage:', e);
+    }
+}
+
+/**
+ * Restore employee tab data from localStorage
+ * Returns true if data was restored, false otherwise
+ */
+function restoreTabsFromLocalStorage() {
+    try {
+        const tabsJson = localStorage.getItem(LS_KEY_TABS);
+        const savedActive = localStorage.getItem(LS_KEY_ACTIVE);
+        const savedCounter = localStorage.getItem(LS_KEY_COUNTER);
+        
+        if (!tabsJson) return false;
+        
+        const restored = JSON.parse(tabsJson);
+        if (!restored || typeof restored !== 'object' || Object.keys(restored).length === 0) return false;
+        
+        // Restore tab counter
+        if (savedCounter) {
+            tabCounter = parseInt(savedCounter) || 0;
+        }
+        
+        // Restore each tab
+        for (const [tabId, tab] of Object.entries(restored)) {
+            if (tab.saved) continue; // Skip already-saved tabs
+            
+            employeeTabs[tabId] = {
+                tabId: tab.tabId,
+                employeeName: tab.employeeName,
+                salary: tab.salary,
+                periodStart: tab.periodStart,
+                periodEnd: tab.periodEnd,
+                importData: tab.importData,
+                classification: tab.classification || '',
+                trainingAmount: tab.trainingAmount || 0,
+                trainingRemarks: tab.trainingRemarks || '',
+                scheduleThresholds: tab.scheduleThresholds || null,
+                saved: false,
+                snapshotHTML: tab.snapshotHTML || null,
+                snapshotState: tab.snapshotState || null
+            };
+        }
+        
+        const restoredCount = Object.keys(employeeTabs).length;
+        if (restoredCount === 0) return false;
+        
+        // Show tab bar and render tabs
+        const tabBar = document.getElementById('employee_tabs_bar');
+        if (tabBar) tabBar.style.display = 'block';
+        renderEmployeeTabs();
+        updateSaveAllButton();
+        
+        // Switch to the previously active tab (or first available)
+        const targetTab = (savedActive && employeeTabs[savedActive]) 
+            ? savedActive 
+            : Object.keys(employeeTabs)[0];
+        
+        if (targetTab) {
+            switchEmployeeTab(targetTab);
+        }
+        
+        console.log(`Restored ${restoredCount} employee tab(s) from localStorage`);
+        showImportStatus('success', `Restored ${restoredCount} unsaved employee tab(s) from your previous session.`);
+        return true;
+    } catch (e) {
+        console.warn('Failed to restore tabs from localStorage:', e);
+        return false;
+    }
+}
+
+/**
+ * Clear saved tabs from localStorage (call after successful save or manual clear)
+ */
+function clearTabsFromLocalStorage() {
+    try {
+        localStorage.removeItem(LS_KEY_TABS);
+        localStorage.removeItem(LS_KEY_ACTIVE);
+        localStorage.removeItem(LS_KEY_COUNTER);
+    } catch (e) {
+        console.warn('Failed to clear localStorage:', e);
+    }
+}
+
+/**
+ * Create a new tab for an imported employee and populate the DTR form
+ */
+function createEmployeeTab(importData) {
+    tabCounter++;
+    const tabId = 'emp_tab_' + tabCounter;
+    const empInfo = importData.employee_info || {};
+    // Debug: log raw import data for visibility during troubleshooting
+    try { console.log('Imported sheet data (createEmployeeTab):', importData); } catch(e) {}
+    let empName = empInfo.full_name || 'Employee ' + tabCounter;
+    if (importData.sheet_name) {
+        empName += ' (' + importData.sheet_name + ')';
+    }
+
+    // Store the raw import data (we'll populate the form when this tab is activated)
+    // Determine classification: prefer explicit flags (is_trainer / is_fixrate) from import
+    let storedClassification = empInfo.classification || empInfo.employee_classification || '';
+    const trainerFlag = String(empInfo.is_trainer || '').trim().toLowerCase();
+    const fixrateFlag = String(empInfo.is_fixrate || '').trim().toLowerCase();
+    if (trainerFlag && trainerFlag !== '' && trainerFlag !== '0' && trainerFlag !== 'no' && trainerFlag !== 'false') {
+        storedClassification = 'trainer';
+    } else if (fixrateFlag && fixrateFlag !== '' && fixrateFlag !== '0' && fixrateFlag !== 'no' && fixrateFlag !== 'false') {
+        storedClassification = 'fixedrate';
+    }
+
+    employeeTabs[tabId] = {
+        tabId: tabId,
+        employeeName: empName,
+        salary: empInfo.basic_monthly_salary || 0,
+        periodStart: (importData.period_info || {}).start_date || '',
+        periodEnd: (importData.period_info || {}).end_date || '',
+        importData: importData,
+        classification: storedClassification,
+        trainingAmount: (importData.trainee_summary || {}).total_cost || 0,
+        trainingRemarks: (importData.trainee_summary || {}).training_remarks || '',
+        scheduleThresholds: importData.schedule_thresholds || null,
+        saved: false,
+        snapshotHTML: null,
+        snapshotState: null
+    };
+
+    // Show tab bar
+    const tabBar = document.getElementById('employee_tabs_bar');
+    if (tabBar) tabBar.style.display = 'block';
+
+    // Render tabs
+    renderEmployeeTabs();
+
+    // Switch to the new tab
+    switchEmployeeTab(tabId);
+
+    // Update Save All button
+    updateSaveAllButton();
+    
+    // Persist to localStorage
+    saveTabsToLocalStorage();
+}
+
+/**
+ * Render the tab list from employeeTabs
+ */
+function renderEmployeeTabs() {
+    const tabList = document.getElementById('employee_tabs_list');
+    if (!tabList) return;
+
+    tabList.innerHTML = '';
+    const tabIds = Object.keys(employeeTabs);
+
+    tabIds.forEach(tabId => {
+        const tab = employeeTabs[tabId];
+        const tabEl = document.createElement('div');
+        tabEl.className = 'employee-tab' + (tabId === activeTabId ? ' active' : '');
+        tabEl.setAttribute('data-tab-id', tabId);
+        tabEl.innerHTML = `
+            <span class="tab-status"></span>
+            <span class="tab-emp-name">${escapeHtml(tab.employeeName)}</span>
+            ${tab.saved ? '<span class="tab-saved-badge">SAVED</span>' : ''}
+            <span class="tab-close" onclick="event.stopPropagation(); removeEmployeeTab('${tabId}')" title="Remove this employee"><i class="fas fa-times"></i></span>
+        `;
+        tabEl.addEventListener('click', () => switchEmployeeTab(tabId));
+        tabList.appendChild(tabEl);
+    });
+}
+
+/**
+ * Helper: escape HTML entities
+ */
+function escapeHtml(text) {
+    const div = document.createElement('div');
+    div.appendChild(document.createTextNode(text));
+    return div.innerHTML;
+}
+
+/**
+ * Save current tab state (snapshot the DOM of DTR rows + form values)
+ */
+function saveCurrentTabState() {
+    if (!activeTabId || !employeeTabs[activeTabId]) return;
+
+    const tab = employeeTabs[activeTabId];
+    
+    // Snapshot the DTR rows HTML
+    // CRITICAL: Sync DOM input values/checked states to HTML attributes first
+    // because innerHTML only captures attributes, not live DOM properties
+    const dtrRows = document.getElementById('dtr_rows');
+    if (dtrRows) {
+        dtrRows.querySelectorAll('input, select, textarea').forEach(el => {
+            if (el.type === 'checkbox' || el.type === 'radio') {
+                if (el.checked) {
+                    el.setAttribute('checked', 'checked');
+                } else {
+                    el.removeAttribute('checked');
+                }
+            } else {
+                el.setAttribute('value', el.value);
+            }
+        });
+        tab.snapshotHTML = dtrRows.innerHTML;
+    }
+
+    // Snapshot form state
+    tab.snapshotState = {
+        employeeName: document.getElementById('imported_employee_name')?.value || '',
+        salary: document.getElementById('imported_salary')?.value || '',
+        periodStart: document.getElementById('imported_period_start')?.value || '',
+        periodEnd: document.getElementById('imported_period_end')?.value || '',
+        basicSalary: document.getElementById('basic_monthly_salary')?.value || '',
+        dailyRate: document.getElementById('daily_rate')?.value || '',
+        otRate: document.getElementById('ot_rate')?.value || '',
+        lateThreshold: document.getElementById('late_threshold')?.value || '8:00',
+        endThreshold: document.getElementById('end_threshold')?.value || '17:00',
+        trainingAmount: document.getElementById('training_amount_main')?.value || '0.00',
+        trainingRemarks: document.getElementById('training_remarks_main')?.value || '',
+        importedTrainingAmount: document.getElementById('imported_training_amount')?.value || '0',
+        importedTrainingRemarks: document.getElementById('imported_training_remarks')?.value || '',
+        tb5EmployeeName: document.getElementById('tb5_employee_name')?.textContent || '-',
+        sss: document.getElementById('imported_sss')?.value || '',
+        philhealth: document.getElementById('imported_philhealth')?.value || '',
+        pagibig: document.getElementById('imported_pagibig')?.value || ''
+    };
+}
+
+/**
+ * Restore a tab's state (load snapshot into the DOM)
+ */
+function restoreTabState(tabId) {
+    const tab = employeeTabs[tabId];
+    if (!tab) return;
+
+    if (tab.snapshotHTML !== null && tab.snapshotState !== null) {
+        // Restore from snapshot (tab was previously active)
+        const dtrRows = document.getElementById('dtr_rows');
+        if (dtrRows) {
+            dtrRows.innerHTML = tab.snapshotHTML;
+        }
+
+        const s = tab.snapshotState;
+        const setVal = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+        const setText = (id, val) => { const el = document.getElementById(id); if (el) el.textContent = val; };
+
+        setVal('imported_employee_name', s.employeeName);
+        setVal('imported_salary', s.salary);
+        setVal('imported_period_start', s.periodStart);
+        setVal('imported_period_end', s.periodEnd);
+        setVal('basic_monthly_salary', s.basicSalary);
+        
+        // Set the original base salary for per day calculations
+        const basicSalaryField = document.getElementById('basic_monthly_salary');
+        if (basicSalaryField && s.basicSalary) {
+            const baseSalary = parseFloat(s.basicSalary.toString().replace(/,/g, '')) || 0;
+            if (baseSalary > 0) {
+                basicSalaryField.dataset.originalBaseSalary = baseSalary.toFixed(2);
+            }
+        }
+        
+        setVal('daily_rate', s.dailyRate);
+        setVal('ot_rate', s.otRate);
+        setVal('late_threshold', s.lateThreshold);
+        setVal('end_threshold', s.endThreshold);
+        setVal('training_amount_main', s.trainingAmount);
+        setVal('training_remarks_main', s.trainingRemarks);
+        setVal('imported_training_amount', s.importedTrainingAmount);
+        setVal('imported_training_remarks', s.importedTrainingRemarks);
+        setText('tb5_employee_name', s.tb5EmployeeName);
+        setVal('imported_sss', s.sss);
+        setVal('imported_philhealth', s.philhealth);
+        setVal('imported_pagibig', s.pagibig);
+
+        // Reattach listeners and recalculate
+        updateRowCount();
+        attachDTRListeners();
+        updateRatesFromDaily();
+        
+        // Apply classification configuration
+        const snapClassification = (tab.classification || '').toLowerCase().replace(/\s+/g, '');
+        if (snapClassification === 'trainer') {
+            configureForTrainer();
+        } else if (snapClassification === 'fixedrate') {
+            configureForFixedRate();
+        } else {
+            configureForRegular();
+        }
+        
+        // Recalculate all rows
+        requestAnimationFrame(() => {
+            document.querySelectorAll('#dtr_rows tr[data-row]').forEach(row => {
+                const rn = parseInt(row.getAttribute('data-row'));
+                try { calculateRowDTR(rn); } catch(e) { /* skip */ }
+            });
+            calculateTotals();
+        });
+    } else {
+        // First time activation - populate from import data
+        populateMainDTRFromImport(tab.importData);
+        
+        // Set hidden form fields from import data so save functions read correct values
+        const _empInfo = tab.importData.employee_info || {};
+        const _periodInfo = tab.importData.period_info || {};
+        const _setImp = (id, val) => { const el = document.getElementById(id); if (el) el.value = val; };
+        _setImp('imported_employee_name', _empInfo.full_name || '');
+        _setImp('imported_salary', _empInfo.basic_monthly_salary || '');
+        _setImp('imported_period_start', _periodInfo.start_date || '');
+        _setImp('imported_period_end', _periodInfo.end_date || '');
+        _setImp('imported_records_count', (tab.importData.dtr_data || []).length || tab.importData.records_count || '0');
+        
+        // Set schedule thresholds
+        if (tab.scheduleThresholds) {
+            const lateThInput = document.getElementById('late_threshold');
+            const endThInput = document.getElementById('end_threshold');
+            if (tab.scheduleThresholds.late_threshold && lateThInput) {
+                lateThInput.value = tab.scheduleThresholds.late_threshold;
+            }
+            if (tab.scheduleThresholds.end_time && endThInput) {
+                endThInput.value = tab.scheduleThresholds.end_time;
+            }
+        }
+
+        // Set training amount and remarks
+        if (tab.trainingAmount > 0) {
+            const impAmountEl = document.getElementById('imported_training_amount');
+            if (impAmountEl) impAmountEl.value = tab.trainingAmount.toFixed(2);
+            const mainAmountEl = document.getElementById('training_amount_main');
+            if (mainAmountEl) mainAmountEl.value = tab.trainingAmount.toFixed(2);
+            calculateTotals();
+        }
+        if (tab.trainingRemarks) {
+            const impRemarksEl = document.getElementById('imported_training_remarks');
+            const mainRemarksEl = document.getElementById('training_remarks_main');
+            if (impRemarksEl) impRemarksEl.value = tab.trainingRemarks;
+            if (mainRemarksEl) mainRemarksEl.value = tab.trainingRemarks;
+        }
+        
+        // Apply classification configuration from imported data
+        const tabClassification = (tab.classification || '').toLowerCase().replace(/\s+/g, '');
+        if (tabClassification === 'trainer') {
+            configureForTrainer();
+        } else if (tabClassification === 'fixedrate') {
+            configureForFixedRate();
+        } else {
+            configureForRegular();
+        }
+    }
+}
+
+/**
+ * Switch to a different employee tab
+ */
+function switchEmployeeTab(tabId) {
+    if (!employeeTabs[tabId]) return;
+
+    // Always save current tab state before switching
+    if (activeTabId && activeTabId !== tabId) {
+        saveCurrentTabState();
+    }
+
+    activeTabId = tabId;
+
+    // Restore the target tab's state
+    restoreTabState(tabId);
+
+    // Show payslip form
+    const payslipForm = document.getElementById('payslip_form');
+    if (payslipForm) payslipForm.style.display = 'block';
+
+    // Update tab visual state
+    renderEmployeeTabs();
+    
+}
+
+/**
+ * Show custom confirmation dialog
+ */
+function showCustomConfirm(message, title = 'Confirm Action', type = 'warning') {
+    return new Promise((resolve) => {
+        const overlay = document.createElement('div');
+        overlay.className = 'custom-modal-overlay active';
+        
+        let icon = 'fa-question-circle';
+        if (type === 'warning') icon = 'fa-exclamation-triangle';
+        if (type === 'error') icon = 'fa-exclamation-circle';
+        
+        overlay.innerHTML = `
+            <div class="custom-modal ${type}">
+                <div class="custom-modal-header">
+                    <i class="fas ${icon}"></i>
+                    <h3>${title}</h3>
+                </div>
+                <div class="custom-modal-body">
+                    ${message}
+                </div>
+                <div class="custom-modal-footer">
+                    <button class="modal-btn modal-btn-secondary" id="modalCancelBtn">
+                        <i class="fas fa-times"></i> Cancel
+                    </button>
+                    <button class="modal-btn modal-btn-primary" id="modalConfirmBtn">
+                        <i class="fas fa-check"></i> OK
+                    </button>
+                </div>
+            </div>
+        `;
+        document.body.appendChild(overlay);
+        
+        const confirmBtn = overlay.querySelector('#modalConfirmBtn');
+        const cancelBtn = overlay.querySelector('#modalCancelBtn');
+        
+        confirmBtn.onclick = () => {
+            overlay.style.animation = 'fadeIn 0.15s ease reverse';
+            setTimeout(() => {
+                document.body.removeChild(overlay);
+                resolve(true);
+            }, 150);
+        };
+        
+        cancelBtn.onclick = () => {
+            overlay.style.animation = 'fadeIn 0.15s ease reverse';
+            setTimeout(() => {
+                document.body.removeChild(overlay);
+                resolve(false);
+            }, 150);
+        };
+        
+        overlay.onclick = (e) => {
+            if (e.target === overlay) {
+                overlay.style.animation = 'fadeIn 0.15s ease reverse';
+                setTimeout(() => {
+                    document.body.removeChild(overlay);
+                    resolve(false);
+                }, 150);
+            }
+        };
+        
+        // Focus on confirm button
+        setTimeout(() => confirmBtn.focus(), 100);
+    });
+}
+
+/**
+ * Remove an employee tab
+ */
+async function removeEmployeeTab(tabId) {
+    if (!employeeTabs[tabId]) return;
+
+    let confirmed = false;
+    if (employeeTabs[tabId].saved) {
+        confirmed = await showCustomConfirm(
+            'This employee has already been saved. Remove tab anyway?',
+            'Remove Saved Employee',
+            'warning'
+        );
+    } else {
+        const empName = employeeTabs[tabId].employeeName || 'this employee';
+        confirmed = await showCustomConfirm(
+            `Remove <strong>${empName}</strong> from the import list?`,
+            'Remove Employee',
+            'warning'
+        );
+    }
+    
+    if (!confirmed) return;
+
+    delete employeeTabs[tabId];
+
+    const remainingTabs = Object.keys(employeeTabs);
+    if (remainingTabs.length === 0) {
+        // No more tabs - hide everything
+        activeTabId = null;
+        const tabBar = document.getElementById('employee_tabs_bar');
+        if (tabBar) tabBar.style.display = 'none';
+        const payslipForm = document.getElementById('payslip_form');
+        if (payslipForm) payslipForm.style.display = 'none';
+    } else if (activeTabId === tabId) {
+        // Switch to first remaining tab
+        switchEmployeeTab(remainingTabs[0]);
+    }
+
+    renderEmployeeTabs();
+    updateSaveAllButton();
+    
+    // Persist to localStorage
+    saveTabsToLocalStorage();
+}
+
+/**
+ * Update the Save All button visibility and count
+ */
+function updateSaveAllButton() {
+    const tabCount = Object.keys(employeeTabs).length;
+    const saveAllBtn = document.getElementById('btn_save_all_dtr');
+    const saveOneBtn = document.getElementById('btn_save_main_dtr');
+    const countSpan = document.getElementById('save_all_count');
+
+    if (tabCount > 1) {
+        // Multiple tabs: show Save All, keep single save too
+        if (saveAllBtn) { saveAllBtn.style.display = 'inline-flex'; }
+        if (countSpan) countSpan.textContent = tabCount;
+    } else {
+        if (saveAllBtn) saveAllBtn.style.display = 'none';
+    }
+}
+
+/**
+ * Save ALL employee tabs to the database sequentially
+ */
+async function saveAllDTRToDatabase() {
+    const tabIds = Object.keys(employeeTabs);
+    const unsavedTabs = tabIds.filter(id => !employeeTabs[id].saved);
+    
+    if (unsavedTabs.length === 0) {
+        alert('All employees have already been saved.');
+        return;
+    }
+
+    const confirmed = await showCustomConfirm(
+        `Save <strong>${unsavedTabs.length} employee(s)</strong> to the Payroll List?`,
+        'Save All Employees',
+        'warning'
+    );
+    if (!confirmed) return;
+
+    const saveAllBtn = document.getElementById('btn_save_all_dtr');
+    const originalHTML = saveAllBtn ? saveAllBtn.innerHTML : '';
+    if (saveAllBtn) {
+        saveAllBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving 0/' + unsavedTabs.length + '...';
+        saveAllBtn.disabled = true;
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+    const errors = [];
+
+    for (let i = 0; i < unsavedTabs.length; i++) {
+        const tabId = unsavedTabs[i];
+
+        // Switch to the tab to populate the DOM
+        switchEmployeeTab(tabId);
+
+        // Small delay to let DOM render
+        await new Promise(r => setTimeout(r, 400));
+
+        // Quick sanity check: if this tab has no DTR rows in import data, skip and report
+        const tabImport = employeeTabs[tabId] && employeeTabs[tabId].importData;
+        const importedCount = (tabImport && ((tabImport.dtr_data && tabImport.dtr_data.length) || tabImport.records_count)) || 0;
+        if (!importedCount || importedCount === 0) {
+            failCount++;
+            errors.push(`${employeeTabs[tabId].employeeName}: No DTR records to save`);
+            // Update progress UI
+            if (saveAllBtn) saveAllBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Saving ${i + 1}/${unsavedTabs.length}...`;
+            // Mark as not saved and continue
+            employeeTabs[tabId].saved = false;
+            continue;
+        }
+
+        // Update progress
+        if (saveAllBtn) {
+            saveAllBtn.innerHTML = `<i class="fas fa-spinner fa-spin"></i> Saving ${i + 1}/${unsavedTabs.length}...`;
+        }
+
+        // Try saving this tab
+        try {
+            await saveSingleTabToDatabase(tabId);
+            employeeTabs[tabId].saved = true;
+            successCount++;
+        } catch (err) {
+            failCount++;
+            errors.push(`${employeeTabs[tabId].employeeName}: ${err.message}`);
+        }
+    }
+
+    // Re-render tabs to show saved badges
+    renderEmployeeTabs();
+
+    if (saveAllBtn) {
+        saveAllBtn.disabled = false;
+    }
+
+    if (failCount === 0) {
+        // All succeeded - clear localStorage and redirect
+        clearTabsFromLocalStorage();
+        const bar = document.getElementById('dtr_save_bar');
+        if (bar) {
+            bar.innerHTML = `<div style="width:100%;text-align:center;color:#68d391;font-size:15px;font-weight:600;">
+                <i class="fas fa-check-circle"></i>
+                All ${successCount} employee(s) saved successfully!
+                &nbsp;&nbsp;<span style="color:#a0aec0;font-weight:400;">Redirecting to Payroll List&hellip;</span>
+            </div>`;
+        }
+        setTimeout(() => { window.location.href = 'payroll_list.php'; }, 2000);
+    } else {
+        if (saveAllBtn) saveAllBtn.innerHTML = originalHTML;
+        // Update localStorage to remove successfully saved tabs
+        saveTabsToLocalStorage();
+        alert(`Saved ${successCount} of ${unsavedTabs.length} employees.\n\nFailed (${failCount}):\n${errors.join('\n')}`);
+    }
+}
+
+/**
+ * Save a single tab's DTR data to the database (returns a Promise)
+ */
+function saveSingleTabToDatabase(tabId) {
+    return new Promise((resolve, reject) => {
+        // The tab should already be active in the DOM
+        const tab = employeeTabs[tabId];
+        if (!tab) { reject(new Error('Tab not found')); return; }
+
+        // Gather data: prefer tab.importData values (more reliable than DOM when switching tabs fast)
+        const empInfo = tab.importData && tab.importData.employee_info ? tab.importData.employee_info : {};
+        const employeeName = empInfo.full_name || document.getElementById('imported_employee_name')?.value || tab.employeeName;
+        const salary = parseFloat(empInfo.basic_monthly_salary || document.getElementById('imported_salary')?.value || document.getElementById('basic_monthly_salary')?.value) || 0;
+        const periodStart = (tab.importData && tab.importData.period_info && tab.importData.period_info.start_date) || document.getElementById('imported_period_start')?.value || '';
+        const periodEnd = (tab.importData && tab.importData.period_info && tab.importData.period_info.end_date) || document.getElementById('imported_period_end')?.value || '';
+
+        if (!employeeName) { reject(new Error('No employee name')); return; }
+        if (!periodStart || !periodEnd) { reject(new Error('No payroll period')); return; }
+
+        const dtrRows = document.querySelectorAll('#dtr_rows tr[data-row]');
+        const dtrRecords = [];
+        dtrRows.forEach(row => {
+            const rowNum = row.getAttribute('data-row');
+            const dateInput = row.querySelector(`input[name="dtr_date_${rowNum}"]`);
+            if (!dateInput || !dateInput.value) return;
+
+            const halfdayDeduct = parseFloat(row.querySelector(`input[name="halfday_deduct_${rowNum}"]`)?.value) || 0;
+            dtrRecords.push({
+                dtr_date:       dateInput.value,
+                am_in:          row.querySelector(`input[name="am_in_${rowNum}"]`)?.value        || '',
+                am_out:         row.querySelector(`input[name="am_out_${rowNum}"]`)?.value       || '',
+                pm_in:          row.querySelector(`input[name="pm_in_${rowNum}"]`)?.value        || '',
+                pm_out:         row.querySelector(`input[name="pm_out_${rowNum}"]`)?.value       || '',
+                is_absent:      row.querySelector(`input[name="absent_${rowNum}"]`)?.checked ? 1 : 0,
+                is_training:    row.querySelector(`input[name="training_${rowNum}"]`)?.checked ? 1 : 0,
+                ot_out:         row.querySelector(`input[name="ot_out_${rowNum}"]`)?.value       || '',
+                half_in:        row.querySelector(`input[name="halfday_in_${rowNum}"]`)?.value   || '',
+                half_out:       row.querySelector(`input[name="halfday_out_${rowNum}"]`)?.value  || '',
+                is_halfday:     halfdayDeduct > 0 ? 1 : 0,
+                total_work_hours: parseFloat(row.querySelector(`input[name="work_hours_${rowNum}"]`)?.value) || 0,
+                late_minutes:   parseFloat(row.querySelector(`input[name="late_mins_${rowNum}"]`)?.value)    || 0,
+                undertime_hours:parseFloat(row.querySelector(`input[name="undertime_${rowNum}"]`)?.value)    || 0,
+                daily_ot_hours: parseFloat(row.querySelector(`input[name="ot_hours_${rowNum}"]`)?.value)     || 0,
+                absent_deduct:  parseFloat(row.querySelector(`input[name="absent_deduct_${rowNum}"]`)?.value)|| 0,
+                late_deduct:    parseFloat(row.querySelector(`input[name="late_deduct_${rowNum}"]`)?.value)  || 0,
+                undertime_deduct:parseFloat(row.querySelector(`input[name="undertime_deduct_${rowNum}"]`)?.value)||0,
+                halfday_deduct: halfdayDeduct,
+                ot_pay:         parseFloat(row.querySelector(`input[name="ot_pay_${rowNum}"]`)?.value)       || 0,
+                govt_deduct:    parseFloat(row.querySelector(`input[name="govt_${rowNum}"]`)?.value)         || 0,
+                auto_salary:    parseFormattedNumber(row.querySelector(`input[name="auto_salary_${rowNum}"]`)?.value),
+                remarks:        row.querySelector(`input[name="remarks_${rowNum}"]`)?.value                  || ''
+            });
+        });
+
+        if (dtrRecords.length === 0) { reject(new Error('No DTR records')); return; }
+
+        // Extract govt deductions from remarks
+        let sssContribution = 0, philhealthContrib = 0, pagibigContrib = 0;
+        dtrRecords.forEach(r => {
+            const rem = (r.remarks || '').toUpperCase().trim();
+            if (rem === 'SSS') sssContribution = r.govt_deduct;
+            else if (rem === 'PHILHEALTH') philhealthContrib = r.govt_deduct;
+            else if (rem === 'PAGIBIG') pagibigContrib = r.govt_deduct;
+        });
+
+        // Collect totals - use parseFormattedNumber to handle comma-formatted values
+        const totalWorkMins     = parseFormattedNumber(document.getElementById('total_work_mins')?.textContent);
+        const totalLateHours    = parseFormattedNumber(document.getElementById('total_late_hours')?.textContent);
+        const totalUndertime    = parseFormattedNumber(document.getElementById('total_undertime')?.textContent);
+        const totalOtHours      = parseFormattedNumber(document.getElementById('total_ot_hours')?.textContent);
+        const totalAbsentDays   = parseFormattedNumber(document.getElementById('total_absent_days')?.textContent);
+        const totalLateDeduct   = parseFormattedNumber(document.getElementById('total_late_deduct')?.textContent);
+        const totalUtDeduct     = parseFormattedNumber(document.getElementById('total_undertime_deduct')?.textContent);
+        const totalHalfDeduct   = parseFormattedNumber(document.getElementById('total_halfday_deduct')?.textContent);
+        const totalOtPay        = parseFormattedNumber(document.getElementById('total_ot_payment')?.textContent);
+        const totalSalary       = parseFormattedNumber(document.getElementById('total_salary')?.textContent);
+        const totalGovtDeduct   = parseFormattedNumber(document.getElementById('total_govt')?.textContent);
+        const daysWorked        = dtrRecords.filter(r => !r.is_absent).length;
+
+        // Calculate absent deduction = absent days × per-day rate
+        const perDayForAbsent = parseFormattedNumber(document.getElementById('daily_rate')?.value) || 0;
+        const totalAbsentDeduct = totalAbsentDays * perDayForAbsent;
+
+        // Get training payment (shows separately on payslip)
+        // Prefer the tab.trainingAmount (comes from imported data) as the authoritative training payment
+        const traineePayment = parseFloat(tab.trainingAmount || document.getElementById('training_amount_main')?.value) ||
+                       parseFloat(document.getElementById('imported_training_amount')?.value) || 0;
+        const trainingsCount = dtrRecords.filter(r => r.is_training).length;
+        // gross_pay for DB = total salary WITHOUT training (training is saved separately)
+        // Add halfday back because halfday should NOT be deducted from gross, only from net
+        const grossPayForDB = totalSalary + totalHalfDeduct - traineePayment;
+
+        const formData = new FormData();
+        // Include tab id for server-side debugging and use imported values where possible
+        formData.append('tab_id', tabId);
+        formData.append('employee_id',      'imported');
+        formData.append('employee_name',    employeeName);
+        formData.append('salary',           salary);
+        
+        // Send the ACTUAL rates from input fields (preserves user-entered rates)
+        const perDayInput = document.getElementById('daily_rate');
+        const perDayRate = perDayInput ? parseFormattedNumber(perDayInput.value) : 0;
+        formData.append('per_day_rate', perDayRate);
+        
+        // Also send per_hour_rate, per_minute_rate, and ot_rate
+        const hourlyRateValue = document.getElementById('hourly_rate_value')?.value || (perDayRate / 8);
+        const minuteRateValue = document.getElementById('minute_rate_value')?.value || (hourlyRateValue / 60);
+        const otRateValue = document.getElementById('ot_rate')?.value || (hourlyRateValue * 1.25);
+        
+        formData.append('per_hour_rate', parseFloat(hourlyRateValue));
+        formData.append('per_minute_rate', parseFloat(minuteRateValue));
+        formData.append('ot_rate', parseFloat(otRateValue));
+        
+        formData.append('period_start',     periodStart);
+        formData.append('period_end',       periodEnd);
+        formData.append('days_office',      daysWorked);
+        formData.append('gross_pay',        grossPayForDB);
+        formData.append('trainings_count',  trainingsCount);
+        formData.append('trainings_cost',   traineePayment);
+        formData.append('payment_per_trainee', trainingsCount > 0 ? (traineePayment / trainingsCount) : 0);
+        formData.append('total_late_hours',     totalLateHours);
+        formData.append('total_undertime_hours',totalUndertime);
+        formData.append('total_ot_hours',       totalOtHours);
+        formData.append('total_absent_days',    totalAbsentDays);
+        formData.append('total_absent_deduct',  totalAbsentDeduct);
+        formData.append('total_late_deduct',    totalLateDeduct);
+        formData.append('total_ut_deduct',      totalUtDeduct);
+        formData.append('total_half_deduct',    totalHalfDeduct);
+        formData.append('total_ot_pay',         totalOtPay);
+        formData.append('sss_contribution',      sssContribution);
+        formData.append('philhealth_contribution', philhealthContrib);
+        formData.append('pagibig_contribution',  pagibigContrib);
+        formData.append('total_govt_deductions', totalGovtDeduct);
+        formData.append('late_threshold', document.getElementById('late_threshold')?.value || '8:00');
+        formData.append('end_threshold', document.getElementById('end_threshold')?.value || '17:00');
+        // Send classification from the tab (normalize server-side)
+        formData.append('classification', tab.classification || currentEmployeeClassification || '');
+        formData.append('dtr_records',  JSON.stringify(dtrRecords));
+        formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '');
+
+        fetch('save_dtr.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(r => r.json())
+        .then(data => {
+            if (data.success) {
+                resolve(data);
+            } else {
+                reject(new Error(data.message || 'Save failed'));
+            }
+        })
+        .catch(err => reject(err));
+    });
+}
 
 function switchPayrollMode(mode) {
     if (mode === currentPayrollMode) return;
@@ -3925,10 +5176,15 @@ function switchPayrollMode(mode) {
         const empSelect = document.getElementById('employee_select');
         if (empSelect) empSelect.value = '';
         
-        // Hide DTR calculator unless import data exists
-        const importedSection = document.getElementById('imported_data_section');
-        if (!importedSection || importedSection.style.display === 'none') {
-            payslipForm.style.display = 'none';
+        // Show DTR calculator if there are active employee tabs, otherwise hide
+        const hasTabs = Object.keys(employeeTabs).length > 0;
+        if (hasTabs) {
+            payslipForm.style.display = 'block';
+        } else {
+            const importedSection = document.getElementById('imported_data_section');
+            if (!importedSection || importedSection.style.display === 'none') {
+                payslipForm.style.display = 'none';
+            }
         }
     } else {
         // Show manual, hide import
@@ -4310,16 +5566,25 @@ function switchPayrollMode(mode) {
 
 // Generate 31 DTR rows automatically
 function generate31DTRRows() {
+    console.log('generate31DTRRows() called');
     const dtrRows = document.getElementById('dtr_rows');
+    if (!dtrRows) {
+        console.error('dtr_rows element not found in generate31DTRRows');
+        return;
+    }
     dtrRows.innerHTML = '';
     
-    // Always generate 31 rows
+    // Always generate 31 rows (skip update calls during batch)
     for (let day = 1; day <= 31; day++) {
-        addDTRRow(day, null);
+        addDTRRow(day, null, true);
     }
     
+    // Call update functions once after all rows are created
     updateRowCount();
     attachDTRListeners();
+    calculateTotals();
+    applyNumberFormatting();
+    console.log('generate31DTRRows() complete, rows created:', document.querySelectorAll('#dtr_rows tr').length);
 }
 
 // Generate DTR rows for the selected payroll period
@@ -4327,22 +5592,387 @@ function generateDTRRows(startDate, endDate) {
     const dtrRows = document.getElementById('dtr_rows');
     dtrRows.innerHTML = '';
     
-    const start = new Date(startDate);
-    const end = new Date(endDate);
-    
-    let rowNum = 1;
-    for (let date = new Date(start); date <= end; date.setDate(date.getDate() + 1)) {
-        const dateStr = date.toISOString().split('T')[0];
-        addDTRRow(rowNum, dateStr);
-        rowNum++;
+    // DON'T reset basic salary - it should carry forward from previous periods
+    const basicSalaryField = document.getElementById('basic_monthly_salary');
+    if (basicSalaryField) {
+        // When switching periods, preserve the current displayed value as the new baseline
+        const currentValue = parseFormattedNumber(basicSalaryField.value);
+        
+        console.log('=== PERIOD SWITCH DEBUG ===');
+        console.log(`Current field value: ${basicSalaryField.value}`);
+        console.log(`Parsed current value: ${currentValue}`);
+        console.log(`Existing originalMonthlyValue: ${basicSalaryField.dataset.originalMonthlyValue || 'none'}`);
+        console.log(`Existing originalBaseSalary: ${basicSalaryField.dataset.originalBaseSalary || 'none'}`);
+        
+        // Set originalMonthlyValue to current displayed value (this becomes the base for the new period)
+        // This ensures second cutoff starts with first cutoff's accumulated value
+        if (currentValue > 0) {
+            basicSalaryField.dataset.originalMonthlyValue = currentValue.toFixed(2);
+            console.log(`Setting NEW originalMonthlyValue to: ${currentValue.toFixed(2)}`);
+        }
+        
+        // Ensure originalBaseSalary is set (for per day rate calculations - always the employee's base salary)
+        if (!basicSalaryField.dataset.originalBaseSalary) {
+            // Only set if it doesn't exist - this should be the original employee salary (e.g., 13000)
+            const originalBase = parseFloat(basicSalaryField.dataset.originalBaseSalary) || 0;
+            if (originalBase === 0) {
+                // First time setup - current value might already include Sunday work, so we need to be careful
+                // For now, assume if we're setting this for first time, use the displayed value
+                // This will be overridden when employee is selected
+                basicSalaryField.dataset.originalBaseSalary = currentValue.toFixed(2);
+                console.log(`Setting NEW originalBaseSalary to: ${currentValue.toFixed(2)}`);
+            }
+        }
+        console.log('=== END PERIOD SWITCH DEBUG ===');
     }
     
+    // Parse dates as local dates to avoid timezone issues
+    const [startYear, startMonth, startDay] = startDate.split('-').map(Number);
+    const [endYear, endMonth, endDay] = endDate.split('-').map(Number);
+    
+    const start = new Date(startYear, startMonth - 1, startDay);
+    const end = new Date(endYear, endMonth - 1, endDay);
+    
+    console.log(`Generating DTR rows from ${startDate} to ${endDate}`);
+    console.log(`Start date object: ${start.toDateString()}`);
+    console.log(`End date object: ${end.toDateString()}`);
+    console.log(`Start <= End: ${start <= end}`);
+    
+    let rowNum = 1;
+    const currentDate = new Date(start);
+    
+    // Safety check: ensure dates are valid
+    if (isNaN(start.getTime()) || isNaN(end.getTime())) {
+        console.error('Invalid date(s) - cannot generate rows');
+        return;
+    }
+    
+    // Safety check: prevent infinite loops
+    const maxRows = 31;
+    
+    while (currentDate <= end && rowNum <= maxRows) {
+        const year = currentDate.getFullYear();
+        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+        const day = String(currentDate.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${day}`;
+        console.log(`Adding row ${rowNum} for date: ${dateStr}`);
+        addDTRRow(rowNum, dateStr, true);
+        rowNum++;
+        currentDate.setDate(currentDate.getDate() + 1);
+    }
+    
+    console.log(`Total rows generated: ${rowNum - 1}`);
+    // Call update functions once after all rows are created
     updateRowCount();
     attachDTRListeners();
+    applyNumberFormatting();
+    
+    // Call calculateTotals to ensure basic salary display is correct after period switch
+    calculateTotals();
+}
+
+window.activeDayOverrideRow = null;
+window.globalRateFieldSnapshot = null;
+window.dayOverrideValues = {};
+window.checkedDaysEditMode = false;
+window.checkedDaysDefaultSnapshot = null;
+window.checkedDaysOverrideSnapshot = null;
+
+function getCurrentDayOverrideEditableValues() {
+    return {
+        basicSalary: document.getElementById('basic_monthly_salary')?.value || '',
+        dailyRate: document.getElementById('daily_rate')?.value || '',
+        lateThreshold: document.getElementById('late_threshold')?.value || '8:00',
+        endThreshold: document.getElementById('end_threshold')?.value || '17:00'
+    };
+}
+
+function getCurrentCheckedDaysValues() {
+    return {
+        dailyRate: document.getElementById('daily_rate')?.value || '',
+        lateThreshold: document.getElementById('late_threshold')?.value || '8:00',
+        endThreshold: document.getElementById('end_threshold')?.value || '17:00'
+    };
+}
+
+function getCheckedDayOverrideRows() {
+    const rows = [];
+    document.querySelectorAll('.dtr-day-override-toggle').forEach(toggle => {
+        if (toggle.checked && !toggle.disabled) {
+            const rowNum = toggle.getAttribute('data-row');
+            if (rowNum) rows.push(rowNum);
+        }
+    });
+    return rows;
+}
+
+function setCheckedDaysModeLabel(enabled) {
+    const defaultBtn = document.getElementById('checked_days_default_btn');
+    const checkedBtn = document.getElementById('checked_days_checked_btn');
+    const track = document.querySelector('.segment-switch-track');
+    if (defaultBtn) defaultBtn.classList.toggle('active', !enabled);
+    if (checkedBtn) checkedBtn.classList.toggle('active', enabled);
+    if (track) track.classList.toggle('checked-mode', enabled);
+}
+
+function setCheckedDaysMode(enabled) {
+    const switchInput = document.getElementById('checked_days_mode_switch');
+    if (!switchInput) return;
+    switchInput.checked = !!enabled;
+    toggleCheckedDaysMode(switchInput);
+}
+
+function setCheckedDaysFieldsVisualState(enabled) {
+    ['daily_rate', 'late_threshold', 'end_threshold'].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) {
+            el.classList.toggle('checked-days-editing', enabled);
+        }
+    });
+}
+
+function updateCheckedDaysVisuals() {
+    const isEnabled = !!window.checkedDaysEditMode;
+    document.querySelectorAll('#dtr_rows tr').forEach(row => {
+        const rowNum = row.getAttribute('data-row');
+        const toggle = rowNum ? document.querySelector(`input[name="day_override_enabled_${rowNum}"]`) : null;
+        const isTarget = isEnabled && toggle && toggle.checked && !toggle.disabled;
+        row.classList.toggle('checked-days-target-row', !!isTarget);
+    });
+    setCheckedDaysFieldsVisualState(isEnabled);
+}
+
+function loadCheckedDaysValuesIntoHeader(values) {
+    const setVal = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.value = value;
+    };
+    setVal('daily_rate', values.dailyRate || '');
+    setVal('late_threshold', values.lateThreshold || '8:00');
+    setVal('end_threshold', values.endThreshold || '17:00');
+}
+
+function applyCheckedDaysHeaderValuesToRows() {
+    const rows = getCheckedDayOverrideRows();
+    const values = getCurrentCheckedDaysValues();
+    window.checkedDaysOverrideSnapshot = values;
+
+    rows.forEach(rowNum => {
+        const existing = window.dayOverrideValues[rowNum] || {};
+        window.dayOverrideValues[rowNum] = {
+            ...existing,
+            dailyRate: values.dailyRate,
+            lateThreshold: values.lateThreshold,
+            endThreshold: values.endThreshold
+        };
+        calculateRowDTR(rowNum);
+    });
+
+    updateCheckedDaysVisuals();
+    calculateTotals();
+}
+
+function toggleCheckedDaysMode(toggleEl) {
+    const isEnabled = !!(toggleEl && toggleEl.checked);
+    window.checkedDaysEditMode = isEnabled;
+
+    if (isEnabled) {
+        deactivateDayOverrideContext();
+        if (!window.checkedDaysDefaultSnapshot) {
+            window.checkedDaysDefaultSnapshot = getCurrentCheckedDaysValues();
+        }
+        if (!window.checkedDaysOverrideSnapshot) {
+            window.checkedDaysOverrideSnapshot = getCurrentCheckedDaysValues();
+        }
+        loadCheckedDaysValuesIntoHeader(window.checkedDaysOverrideSnapshot);
+        setCheckedDaysModeLabel(true);
+        applyCheckedDaysHeaderValuesToRows();
+        updateCheckedDaysVisuals();
+        return;
+    }
+
+    window.checkedDaysOverrideSnapshot = getCurrentCheckedDaysValues();
+    if (!window.checkedDaysDefaultSnapshot) {
+        window.checkedDaysDefaultSnapshot = getCurrentCheckedDaysValues();
+    }
+    loadCheckedDaysValuesIntoHeader(window.checkedDaysDefaultSnapshot);
+    setCheckedDaysModeLabel(false);
+    updateCheckedDaysVisuals();
+    updateRatesFromDaily();
+}
+
+function getCurrentHeaderRateValues() {
+    return {
+        basicSalary: document.getElementById('basic_monthly_salary')?.value || '',
+        dailyRate: document.getElementById('daily_rate')?.value || '',
+        otRate: document.getElementById('ot_rate')?.value || '',
+        lateThreshold: document.getElementById('late_threshold')?.value || '8:00',
+        endThreshold: document.getElementById('end_threshold')?.value || '17:00'
+    };
+}
+
+function getActiveDayOverrideRow() {
+    if (!window.activeDayOverrideRow) return null;
+    const activeToggle = document.querySelector(`input[name="day_override_enabled_${window.activeDayOverrideRow}"]`);
+    if (!activeToggle || !activeToggle.checked || activeToggle.disabled) {
+        window.activeDayOverrideRow = null;
+        return null;
+    }
+    return window.activeDayOverrideRow;
+}
+
+function captureGlobalRateFieldSnapshot() {
+    window.globalRateFieldSnapshot = getCurrentHeaderRateValues();
+}
+
+function restoreGlobalRateFieldSnapshot() {
+    const snapshot = window.globalRateFieldSnapshot;
+    if (!snapshot) return;
+
+    const setVal = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.value = value;
+    };
+
+    setVal('basic_monthly_salary', snapshot.basicSalary);
+    setVal('daily_rate', snapshot.dailyRate);
+    setVal('ot_rate', snapshot.otRate);
+    setVal('late_threshold', snapshot.lateThreshold);
+    setVal('end_threshold', snapshot.endThreshold);
+}
+
+function syncHeaderFieldsToDayOverride(rowNum) {
+    const current = getCurrentDayOverrideEditableValues();
+    const existing = window.dayOverrideValues[rowNum] || {};
+    window.dayOverrideValues[rowNum] = {
+        ...existing,
+        ...current
+    };
+}
+
+function loadDayOverrideIntoHeaderFields(rowNum) {
+    const values = window.dayOverrideValues[rowNum] || getCurrentDayOverrideEditableValues();
+
+    const setVal = (id, value) => {
+        const el = document.getElementById(id);
+        if (el) el.value = value;
+    };
+
+    setVal('basic_monthly_salary', values.basicSalary || '');
+    setVal('daily_rate', values.dailyRate || '');
+    setVal('late_threshold', values.lateThreshold || '8:00');
+    setVal('end_threshold', values.endThreshold || '17:00');
+}
+
+function markActiveDayOverrideRow(rowNum) {
+    document.querySelectorAll('#dtr_rows tr.override-active-row').forEach(row => {
+        row.classList.remove('override-active-row');
+    });
+    if (!rowNum) return;
+    const activeRow = document.querySelector(`tr[data-row="${rowNum}"]`);
+    if (activeRow) {
+        activeRow.classList.add('override-active-row');
+    }
+}
+
+function seedDayOverrideValues(rowNum) {
+    if (!window.dayOverrideValues[rowNum]) {
+        window.dayOverrideValues[rowNum] = getCurrentDayOverrideEditableValues();
+    }
+}
+
+function activateDayOverrideContext(rowNum) {
+    if (String(window.activeDayOverrideRow) === String(rowNum)) {
+        return;
+    }
+    if (!window.globalRateFieldSnapshot) {
+        captureGlobalRateFieldSnapshot();
+    }
+    seedDayOverrideValues(rowNum);
+    window.activeDayOverrideRow = rowNum;
+    markActiveDayOverrideRow(rowNum);
+    loadDayOverrideIntoHeaderFields(rowNum);
+    updateRatesFromDaily();
+}
+
+function deactivateDayOverrideContext() {
+    if (!window.activeDayOverrideRow) {
+        return;
+    }
+    window.activeDayOverrideRow = null;
+    markActiveDayOverrideRow(null);
+    if (!window.globalRateFieldSnapshot) {
+        captureGlobalRateFieldSnapshot();
+    }
+    restoreGlobalRateFieldSnapshot();
+    updateRatesFromDaily();
+}
+
+function setHeaderContextForRow(rowNum) {
+    if (window.checkedDaysEditMode) {
+        return;
+    }
+
+    const toggle = document.querySelector(`input[name="day_override_enabled_${rowNum}"]`);
+    const isDayOverride = toggle && toggle.checked && !toggle.disabled;
+    if (isDayOverride) {
+        activateDayOverrideContext(rowNum);
+    } else {
+        deactivateDayOverrideContext();
+    }
+}
+
+function applyDayOverrideState(rowNum, isEnabled) {
+    const row = document.querySelector(`tr[data-row="${rowNum}"]`);
+    if (!row) return;
+
+    const isBlocked = row.querySelector('.dtr-absent')?.checked || row.querySelector('.dtr-training')?.checked;
+    if (isEnabled && isBlocked) {
+        const toggle = row.querySelector('.dtr-day-override-toggle');
+        if (toggle) toggle.checked = false;
+    }
+}
+
+function handleDayOverrideToggle() {
+    const rowNum = this.getAttribute('data-row');
+    const isEnabled = this.checked;
+
+    if (window.checkedDaysEditMode) {
+        if (isEnabled) {
+            const existing = window.dayOverrideValues[rowNum] || {};
+            const checkedValues = window.checkedDaysOverrideSnapshot || getCurrentCheckedDaysValues();
+            window.dayOverrideValues[rowNum] = {
+                ...existing,
+                dailyRate: checkedValues.dailyRate,
+                lateThreshold: checkedValues.lateThreshold,
+                endThreshold: checkedValues.endThreshold
+            };
+        }
+        applyDayOverrideState(rowNum, isEnabled);
+        updateCheckedDaysVisuals();
+        calculateRowDTR(rowNum);
+        calculateTotals();
+        return;
+    }
+
+    if (isEnabled) {
+        activateDayOverrideContext(rowNum);
+    } else if (String(window.activeDayOverrideRow) === String(rowNum)) {
+        deactivateDayOverrideContext();
+    }
+
+    applyDayOverrideState(rowNum, isEnabled);
+    updateCheckedDaysVisuals();
+    calculateRowDTR(rowNum);
+}
+
+function handleDayOverrideInputChange() {
+    const rowNum = this.getAttribute('data-row');
+    calculateRowDTR(rowNum);
 }
 
 // Add a single DTR row
-function addDTRRow(rowNum = null, dateStr = null) {
+function addDTRRow(rowNum = null, dateStr = null, skipUpdateCalls = false) {
     const dtrRows = document.getElementById('dtr_rows');
     
     // Get next row number if not provided
@@ -4356,12 +5986,16 @@ function addDTRRow(rowNum = null, dateStr = null) {
     let monthName = '';
     let dayNum = '';
     if (dateStr) {
-        const date = new Date(dateStr);
+        // Parse date as local date to avoid timezone issues
+        const [year, month, day] = dateStr.split('-').map(Number);
+        const date = new Date(year, month - 1, day);
         const months = ['January', 'February', 'March', 'April', 'May', 'June',
                        'July', 'August', 'September', 'October', 'November', 'December'];
+        const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         monthName = months[date.getMonth()];
         dayNum = date.getDate();
-        dateDisplay = `<div class="date-day">${dayNum}</div><div class="date-month">${monthName}</div>`;
+        const dayOfWeek = daysOfWeek[date.getDay()];
+        dateDisplay = `<div class="date-day">${dayNum}</div><div class="date-month">${monthName}</div><div class="date-weekday">${dayOfWeek}</div>`;
     }
     
     const row = document.createElement('tr');
@@ -4370,20 +6004,23 @@ function addDTRRow(rowNum = null, dateStr = null) {
     const _govtVal = rowNum === 1 ? '317.50' : rowNum === 2 ? '125.00' : rowNum === 3 ? '100.00' : '';
     const _remarkVal = rowNum === 1 ? 'SSS' : rowNum === 2 ? 'PHILHEALTH' : rowNum === 3 ? 'PAGIBIG' : '';
     row.innerHTML = `
+        <td class="centered day-override-cell">
+            <input type="checkbox" name="day_override_enabled_${rowNum}" data-row="${rowNum}" class="dtr-day-override-toggle" title="Enable per-day rate/time override">
+        </td>
         <td class="date-cell">
             <input type="hidden" name="dtr_date_${rowNum}" data-row="${rowNum}" value="${dateStr || ''}">
-            ${dateStr ? `<div class="date-display">${dateDisplay}</div>` : '<div class="date-display"><div class="date-day">-</div><div class="date-month">-</div></div>'}
+            ${dateStr ? `<div class="date-display">${dateDisplay}</div>` : '<div class="date-display"><div class="date-day">-</div><div class="date-month">-</div><div class="date-weekday">-</div></div>'}
         </td>
         <td><input type="text" name="am_in_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="8:00" maxlength="5" oninput="formatTime24(this)"></td>
         <td><input type="text" name="pm_out_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="17:00" maxlength="5" oninput="formatTime24(this)"></td>
         <td class="centered"><input type="checkbox" name="absent_${rowNum}" data-row="${rowNum}" class="dtr-absent"></td>
+        <td class="centered"><input type="checkbox" name="training_${rowNum}" data-row="${rowNum}" class="dtr-training"></td>
         <td><input type="text" name="ot_out_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="18:00" maxlength="5" oninput="formatTime24(this)"></td>
         <td><input type="number" name="work_hours_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="0" step="1" title="Total work minutes"></td>
         <td><input type="number" name="late_mins_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="0.00" step="0.01" title="Late hours"></td>
         <td><input type="number" name="undertime_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="0.00" step="0.01" title="Undertime hours"></td>
         <td><input type="number" name="ot_hours_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="0.00" step="0.01" title="OT hours"></td>
         <td><input type="number" name="absent_day_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="0" step="0.5" title="Absent days"></td>
-        <td><input type="number" name="absent_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Absent deduction"></td>
         <td><input type="number" name="late_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Late deduction"></td>
         <td><input type="number" name="undertime_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Undertime deduction"></td>
         <td><input type="number" name="halfday_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Halfday deduction (auto-calculated when work hours < 4)"></td>
@@ -4393,9 +6030,7 @@ function addDTRRow(rowNum = null, dateStr = null) {
         <td><input type="number" name="undertime_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Undertime calculation"></td>
         <td><input type="number" name="ot_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="OT calculation"></td>
         <td><input type="number" name="govt_${rowNum}" data-row="${rowNum}" class="dtr-manual" value="${_govtVal}" step="0.01" title="Manual Gov't deduction"></td>
-        <td><input type="number" name="auto_salary_${rowNum}" data-row="${rowNum}" class="dtr-auto-salary" readonly value="" step="0.01" title="Net Salary"></td>
-        <td><input type="text" name="f1_${rowNum}" data-row="${rowNum}" class="dtr-f-input" maxlength="10" title="F1 marker"></td>
-        <td><input type="text" name="f2_${rowNum}" data-row="${rowNum}" class="dtr-f-input" maxlength="10" title="F2 marker"></td>
+        <td><input type="text" name="auto_salary_${rowNum}" data-row="${rowNum}" class="dtr-auto-salary" readonly value="" title="Net Salary"></td>
         <td><input type="text" name="remarks_${rowNum}" data-row="${rowNum}" class="dtr-remarks-input" value="${_remarkVal}" placeholder="Remarks" title="Remarks"></td>
         <td class="actions-cell">
             <button type="button" class="btn-delete-row" onclick="deleteDTRRow(this)" title="Delete">
@@ -4405,21 +6040,62 @@ function addDTRRow(rowNum = null, dateStr = null) {
     `;
     dtrRows.appendChild(row);
     
-    updateRowCount();
-    attachDTRListeners();
+    // Apply trainer restrictions if needed
+    const normalizedClass = (currentEmployeeClassification || '').toLowerCase().replace(/\s+/g, '');
+    if (normalizedClass === 'trainer') {
+        // For trainer, check if training checkbox is checked on this new row
+        const trainingCheckbox = row.querySelector('.dtr-training');
+        if (trainingCheckbox && trainingCheckbox.checked) {
+            // Disable fields and set net salary if training is checked
+            handleTrainingCheckboxChange.call(trainingCheckbox);
+        }
+    }
     
-    // Validate the row after creation (for default values)
-    validateRowInputs(rowNum);
+    // For fixed rate, training checkboxes control field states per row
+    // If any existing training checkboxes are checked, apply the disabled state
+    if (normalizedClass === 'fixedrate') {
+        const trainingCheckbox = row.querySelector('.dtr-training');
+        if (trainingCheckbox && trainingCheckbox.checked) {
+            // This new row has training checked, disable its fields
+            handleTrainingCheckboxChange.call(trainingCheckbox);
+        }
+    }
     
-    // Recalculate totals after adding row
-    calculateTotals();
+    // Skip update calls if we're doing batch generation (they'll be called once at the end)
+    if (!skipUpdateCalls) {
+        updateRowCount();
+        attachDTRListeners();
+        
+        // Validate the row after creation (for default values)
+        validateRowInputs(rowNum);
+        
+        // Recalculate totals after adding row
+        calculateTotals();
+        
+        // Apply number formatting
+        applyNumberFormatting();
+    }
 }
 
 // Delete a DTR row
-function deleteDTRRow(button) {
-    if (confirm('Are you sure you want to delete this row?')) {
+async function deleteDTRRow(button) {
+    const confirmed = await showCustomConfirm(
+        'Are you sure you want to delete this row?',
+        'Delete Row',
+        'warning'
+    );
+    if (confirmed) {
         const row = button.closest('tr');
+        const deletedRowNum = row ? row.getAttribute('data-row') : null;
         row.remove();
+
+        if (deletedRowNum && String(window.activeDayOverrideRow) === String(deletedRowNum)) {
+            window.activeDayOverrideRow = null;
+            markActiveDayOverrideRow(null);
+            restoreGlobalRateFieldSnapshot();
+            window.globalRateFieldSnapshot = null;
+            updateRatesFromDaily();
+        }
         
         // Renumber remaining rows
         renumberRows();
@@ -4431,9 +6107,16 @@ function deleteDTRRow(button) {
 // Renumber rows after deletion
 function renumberRows() {
     const rows = document.querySelectorAll('#dtr_rows tr');
+    const nextOverrideValues = {};
+
     rows.forEach((row, index) => {
+        const oldRowNum = row.getAttribute('data-row');
         const newRowNum = index + 1;
         row.setAttribute('data-row', newRowNum);
+
+        if (window.dayOverrideValues && oldRowNum && window.dayOverrideValues[oldRowNum]) {
+            nextOverrideValues[newRowNum] = window.dayOverrideValues[oldRowNum];
+        }
         
         // Update all input names and data attributes
         row.querySelectorAll('input, button').forEach(input => {
@@ -4445,6 +6128,8 @@ function renumberRows() {
             }
         });
     });
+
+    window.dayOverrideValues = nextOverrideValues;
 }
 
 // Update row count display
@@ -4457,9 +6142,35 @@ function updateRowCount() {
 }
 
 // Calculate time difference in hours
-function calculateHours(timeIn, timeOut) {
+// If employee arrives within grace period, count from scheduled start time
+function calculateHours(timeIn, timeOut, scheduledStartOverride = null) {
     if (!timeIn || !timeOut) return 0;
-    const [inHour, inMin] = timeIn.split(':').map(Number);
+    
+    // Read scheduled start time from UI input (late_threshold is treated as scheduled start)
+    const thresholdInput = document.getElementById('late_threshold');
+    const gracePeriodMinutes = 5;
+    let scheduledStartMins = 8 * 60; // Default scheduled start: 8:00 AM
+    const thresholdValue = scheduledStartOverride || (thresholdInput ? thresholdInput.value : '');
+    if (thresholdValue) {
+        const parsed = parseTimeToMinutes(thresholdValue);
+        if (parsed !== null) scheduledStartMins = parsed;
+    }
+    // Grace cutoff (end) is scheduled start + grace period (e.g. 8:00 + 5 = 8:05)
+    const graceEndMins = scheduledStartMins + gracePeriodMinutes;
+    
+    // Get actual arrival time in minutes
+    const actualArrivalMins = parseTimeToMinutes(timeIn);
+    
+    // If arrived within grace period, calculate work hours from scheduled start time
+    let effectiveStartTime = timeIn;
+    if (actualArrivalMins !== null && actualArrivalMins <= graceEndMins) {
+        // Use scheduled start time instead of actual arrival
+        const schedHour = Math.floor(scheduledStartMins / 60);
+        const schedMin = scheduledStartMins % 60;
+        effectiveStartTime = `${String(schedHour).padStart(2, '0')}:${String(schedMin).padStart(2, '0')}`;
+    }
+    
+    const [inHour, inMin] = effectiveStartTime.split(':').map(Number);
     const [outHour, outMin] = timeOut.split(':').map(Number);
     
     let hours = outHour - inHour;
@@ -4470,33 +6181,54 @@ function calculateHours(timeIn, timeOut) {
         minutes += 60;
     }
     
-    return hours + (minutes / 60);
+    let totalHours = hours + (minutes / 60);
+    
+    // Subtract 1 hour for lunch break (12:00 PM - 1:00 PM)
+    // Only deduct lunch if work period spans across lunch time
+    const timeInMins = (inHour * 60) + inMin;
+    const timeOutMins = (outHour * 60) + outMin;
+    const lunchStart = 12 * 60; // 12:00 PM in minutes
+    const lunchEnd = 13 * 60;   // 1:00 PM in minutes
+    
+    // If the work period includes lunch time, deduct 1 hour    
+    if (timeInMins < lunchEnd && timeOutMins > lunchStart) {
+        totalHours = Math.max(0, totalHours - 1);
+    }
+    
+    return totalHours;
 }
 
-// Calculate late minutes using configurable threshold (TB5: K3 = grace end time)
-// Late = arrival - grace_end_time, only when arrival > grace_end_time
-function calculateLateMinutes(amIn) {
+// Calculate late minutes with 5-minute grace period
+// Example: Late start is 8:00 AM, grace period extends to 8:05 AM
+// Arrive at 8:05 or before = not late
+// Arrive at 8:06 = 6 minutes late (calculated from 8:00, not 8:05)
+function calculateLateMinutes(amIn, scheduledStartOverride = null) {
     if (!amIn) return 0;
     const actualStart = parseTimeToMinutes(amIn);
     if (actualStart === null) return 0;
     
-    // Read grace/threshold from UI input (default: 07:35 per TB5 K3)
+    // Read scheduled start from UI input (late_threshold is treated as scheduled start)
     const thresholdInput = document.getElementById('late_threshold');
-    let graceEndMins = 7 * 60 + 35; // Default: 7:35 AM
-    if (thresholdInput && thresholdInput.value) {
-        const parsed = parseTimeToMinutes(thresholdInput.value);
-        if (parsed !== null) graceEndMins = parsed;
+    const gracePeriodMinutes = 5;
+    let scheduledStartMins = 8 * 60; // Default: 8:00 AM
+    const thresholdValue = scheduledStartOverride || (thresholdInput ? thresholdInput.value : '');
+    if (thresholdValue) {
+        const parsed = parseTimeToMinutes(thresholdValue);
+        if (parsed !== null) scheduledStartMins = parsed;
     }
-    
-    if (actualStart > graceEndMins) {
-        return actualStart - graceEndMins;
-    }
-    return 0;
+    // Grace cutoff (end) is scheduled start + grace period
+    const graceEndMins = scheduledStartMins + gracePeriodMinutes;
+
+    // If arrived at or before grace cutoff, not late
+    if (actualStart <= graceEndMins) return 0;
+
+    // Arrived after grace cutoff: late = actualStart - scheduledStart
+    return actualStart - scheduledStartMins;
 }
 
 // Calculate undertime minutes based on scheduled end time (TB5: L3 = closing time)
 // Undertime = scheduled_end - actual_pm_out (only when left early)
-function calculateUndertimeMinutes(pmOut) {
+function calculateUndertimeMinutes(pmOut, scheduledEndOverride = null) {
     if (!pmOut) return 0;
     const pmOutMins = parseTimeToMinutes(pmOut);
     if (pmOutMins === null) return 0;
@@ -4504,20 +6236,76 @@ function calculateUndertimeMinutes(pmOut) {
     // Read end threshold from UI input (default: 17:00 per TB5 L3)
     const endInput = document.getElementById('end_threshold');
     let schedEndMins = 17 * 60; // Default: 5:00 PM
-    if (endInput && endInput.value) {
-        const parsed = parseTimeToMinutes(endInput.value);
+    const endValue = scheduledEndOverride || (endInput ? endInput.value : '');
+    if (endValue) {
+        const parsed = parseTimeToMinutes(endValue);
         if (parsed !== null) schedEndMins = parsed;
     }
     
     if (pmOutMins < schedEndMins) {
-        return schedEndMins - pmOutMins;
+        let undertimeMins = schedEndMins - pmOutMins;
+        
+        // Subtract 1 hour (60 minutes) for lunch break (12:00 PM - 1:00 PM) if undertime period spans lunch
+        const lunchStart = 12 * 60; // 12:00 PM in minutes
+        const lunchEnd = 13 * 60;   // 1:00 PM in minutes
+        
+        // If employee left before 1:00 PM and scheduled end is after 12:00 PM, deduct lunch hour
+        if (pmOutMins < lunchEnd && schedEndMins > lunchStart) {
+            undertimeMins = Math.max(0, undertimeMins - 60);
+        }
+        
+        return undertimeMins;
     }
     return 0;
 }
 
+// =====================================================
+// NUMBER FORMATTING FUNCTIONS - Format with commas for thousands/millions
+// =====================================================
+// Helper to safely parse numbers that may have comma formatting
+function parseFormattedNumber(value) {
+    if (!value) return 0;
+    // Remove commas and parse
+    return parseFloat(String(value).replace(/,/g, '')) || 0;
+}
+
+function formatNumberWithCommas(value) {
+    if (value === null || value === undefined || value === '') return '';
+    const num = parseFloat(value);
+    if (isNaN(num)) return value;
+    return num.toLocaleString('en-US', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+}
+
+// Apply formatting to all numeric inputs/displays in DTR table
+function applyNumberFormatting() {
+    // Format all readonly calculation fields
+    document.querySelectorAll('.dtr-calc, .dtr-deduct, .dtr-pay, .dtr-auto-calc, .dtr-auto-salary').forEach(input => {
+        if (input.value && input.value !== '') {
+            const numValue = parseFloat(input.value);
+            if (!isNaN(numValue) && numValue >= 1000) {
+                input.setAttribute('data-raw-value', input.value);
+                // Only format if input type is "text" (number inputs can't handle commas)
+                if (input.type === 'text') {
+                    input.value = formatNumberWithCommas(numValue);
+                }
+            }
+        }
+    });
+    
+    // Format totals row
+    document.querySelectorAll('.totals-row td[id^="total_"]').forEach(cell => {
+        if (cell.textContent && cell.textContent !== '') {
+            const numValue = parseFloat(cell.textContent);
+            if (!isNaN(numValue) && numValue >= 1000) {
+                cell.textContent = formatNumberWithCommas(numValue);
+            }
+        }
+    });
+}
+
 // Calculate OT minutes based on scheduled end time (TB5: OT = otOut - closing)
 // OT counted only when otOut exceeds closing time
-function calculateOTMinutes(otOutTime) {
+function calculateOTMinutes(otOutTime, scheduledEndOverride = null) {
     if (!otOutTime) return 0;
     const otMins = parseTimeToMinutes(otOutTime);
     if (otMins === null) return 0;
@@ -4525,8 +6313,9 @@ function calculateOTMinutes(otOutTime) {
     // Read end threshold from UI input (default: 17:00)
     const endInput = document.getElementById('end_threshold');
     let schedEndMins = 17 * 60; // Default: 5:00 PM
-    if (endInput && endInput.value) {
-        const parsed = parseTimeToMinutes(endInput.value);
+    const endValue = scheduledEndOverride || (endInput ? endInput.value : '');
+    if (endValue) {
+        const parsed = parseTimeToMinutes(endValue);
         if (parsed !== null) schedEndMins = parsed;
     }
     
@@ -4560,7 +6349,6 @@ function calculateRowDTR(rowNum) {
     // Check if inputs exist (row might have been deleted)
     const amInInput = document.querySelector(`input[name="am_in_${rowNum}"]`);
     if (!amInInput) {
-        console.warn(`calculateRowDTR(${rowNum}): am_in input not found`);
         return;
     }
     
@@ -4568,11 +6356,37 @@ function calculateRowDTR(rowNum) {
     const pmOut = document.querySelector(`input[name="pm_out_${rowNum}"]`)?.value || '';
     const otOut = document.querySelector(`input[name="ot_out_${rowNum}"]`)?.value || '';
     const isAbsent = document.querySelector(`input[name="absent_${rowNum}"]`)?.checked || false;
-    
-    // Debug logging for first 3 rows with data
-    if (amIn && rowNum <= 6) {
-        console.log(`calcRow(${rowNum}): amIn='${amIn}' pmOut='${pmOut}' absent=${isAbsent} rates: perDay=${dailyRate} perHour=${hourlyRate} perMin=${perMin}`);
+    const isDayOverride = document.querySelector(`input[name="day_override_enabled_${rowNum}"]`)?.checked || false;
+
+    let effectiveDailyRate = dailyRate;
+    let effectiveOtRate = otRate;
+    let effectiveLateThreshold = document.getElementById('late_threshold')?.value || '8:00';
+    let effectiveEndThreshold = document.getElementById('end_threshold')?.value || '17:00';
+
+    if (isDayOverride) {
+        const rowOverride = window.dayOverrideValues[rowNum] || {};
+        const overrideBasic = parseFormattedNumber(rowOverride.basicSalary || '0');
+        const overrideDaily = parseFormattedNumber(rowOverride.dailyRate || '0');
+        const overrideLate = rowOverride.lateThreshold || '';
+        const overrideEnd = rowOverride.endThreshold || '';
+
+        if (overrideDaily > 0) {
+            effectiveDailyRate = overrideDaily;
+        } else if (overrideBasic > 0) {
+            effectiveDailyRate = overrideBasic / 26;
+        }
+        if (parseTimeToMinutes(overrideLate) !== null) {
+            effectiveLateThreshold = overrideLate;
+        }
+        if (parseTimeToMinutes(overrideEnd) !== null) {
+            effectiveEndThreshold = overrideEnd;
+        }
     }
+
+    dailyRate = effectiveDailyRate;
+    hourlyRate = dailyRate / 8;
+    perMin = hourlyRate / 60;
+    otRate = effectiveOtRate;
     
     let workHours = 0;
     let lateMinutes = 0;
@@ -4581,38 +6395,44 @@ function calculateRowDTR(rowNum) {
     let absentDay = isAbsent ? 1 : 0;
     
     if (!isAbsent) {
+        // Calculate late minutes first (with grace period)
+        lateMinutes = calculateLateMinutes(amIn, effectiveLateThreshold);
+        
         // Calculate work hours from AM IN to PM OUT
-        workHours = calculateHours(amIn, pmOut);
-        
-        // Debug: log calculated hours for rows with data
-        if (amIn && rowNum <= 6) {
-            console.log(`calcRow(${rowNum}): workHours=${workHours}`);
-        }
-        
-        // Calculate late minutes (TB5: arrival - grace_end_time)
-        lateMinutes = calculateLateMinutes(amIn);
-        
-        // Calculate undertime (TB5: scheduled_end - actual_pm_out, separate from late)
-        const utMinutes = calculateUndertimeMinutes(pmOut);
-        undertimeHours = utMinutes / 60;
+        // If within grace period, counts from scheduled start time
+        workHours = calculateHours(amIn, pmOut, effectiveLateThreshold);
         
         // Calculate OT hours (TB5: otOut - closing_time)
-        const otMinutes = calculateOTMinutes(otOut);
+        const otMinutes = calculateOTMinutes(otOut, effectiveEndThreshold);
         otHours = otMinutes / 60;
+    }
+    
+    // Check if halfday first (leaving around 12pm OR work hours < 4)
+    let isHalfday = false;
+    let halfdayDeduct = 0;
+    if (!isAbsent && pmOut) {
+        const pmOutMins = parseTimeToMinutes(pmOut);
+        const noonMins = 12 * 60; // 12:00 PM
+        
+        // If work ends at noon (11:45 - 12:15) OR work hours < 4, consider it halfday
+        if ((pmOutMins >= (noonMins - 15) && pmOutMins <= (noonMins + 15)) || (workHours > 0 && workHours < 4)) {
+            isHalfday = true;
+            halfdayDeduct = dailyRate / 2;
+        }
+    }
+    
+    // Calculate undertime ONLY if NOT halfday
+    // If halfday, no undertime is calculated (halfday deduction covers it)
+    undertimeHours = 0;
+    if (!isHalfday) {
+        const utMinutes = calculateUndertimeMinutes(pmOut, effectiveEndThreshold);
+        undertimeHours = utMinutes / 60;
     }
     
     // Calculate deductions and payments (TB5 format)
     const lateDeduct = lateMinutes * perMin;  // TB5: LATE/MIN DEDUCT = late mins * per min rate
     const undertimeDeduct = undertimeHours * hourlyRate;
-    const absentDeduct = absentDay * dailyRate;
     const otPay = otHours * otRate;
-    
-    // Calculate halfday deduction (auto-detect if work hours < 4)
-    // If employee works less than 4 hours (half day), deduct half of daily rate
-    let halfdayDeduct = 0;
-    if (!isAbsent && workHours > 0 && workHours < 4) {
-        halfdayDeduct = dailyRate / 2;
-    }
     
     // Update row fields
     // Work time in HOURS (matching DB field total_work_hours & professor's Excel)
@@ -4625,8 +6445,6 @@ function calculateRowDTR(rowNum) {
     document.querySelector(`input[name="absent_day_${rowNum}"]`).value = absentDay;
     
     // TB5 deductions (no ₱ prefix, just numbers)
-    const absentDeductInput = document.querySelector(`input[name="absent_deduct_${rowNum}"]`);
-    if (absentDeductInput) absentDeductInput.value = absentDeduct.toFixed(2);
     document.querySelector(`input[name="late_deduct_${rowNum}"]`).value = lateDeduct.toFixed(2);
     document.querySelector(`input[name="undertime_deduct_${rowNum}"]`).value = undertimeDeduct.toFixed(2);
     
@@ -4637,7 +6455,7 @@ function calculateRowDTR(rowNum) {
     document.querySelector(`input[name="ot_pay_${rowNum}"]`).value = otPay.toFixed(2);
     
     // Calculate net deductions (Total Deductions - OT Pay)
-    const totalDeductions = absentDeduct + lateDeduct + undertimeDeduct + halfdayDeduct;
+    const totalDeductions = lateDeduct + undertimeDeduct + halfdayDeduct;
     const netDeduct = totalDeductions - otPay;
     const netDeductInput = document.querySelector(`input[name="net_deduct_${rowNum}"]`);
     if (netDeductInput) netDeductInput.value = netDeduct.toFixed(2);
@@ -4652,21 +6470,60 @@ function calculateRowDTR(rowNum) {
     const otCalcInput = document.querySelector(`input[name="ot_calc_${rowNum}"]`);
     if (otCalcInput) otCalcInput.value = otHours.toFixed(2);
     
-    // Calculate automatic salary: Daily rate - net deductions (if not absent)
-    // Only populate when there is actual time data or the row is marked absent
+    // Check if this row is a Sunday
+    const dateInput = document.querySelector(`input[name="dtr_date_${rowNum}"]`);
+    const dateStr = dateInput ? dateInput.value : '';
+    let isSunday = false;
+    if (dateStr) {
+        const date = new Date(dateStr);
+        isSunday = date.getDay() === 0; // 0 = Sunday
+        if (isSunday) {
+            console.log(`Row ${rowNum}: Detected Sunday - ${dateStr}`);
+        }
+    }
+    
+    // Calculate automatic salary for all days including Sunday
+    // Salary = Daily rate - deductions (OT is NOT included per-row, it goes to total gross pay)
     const hasTimeData = amIn || pmOut || otOut;
-    const autoSalary = isAbsent ? 0 : (dailyRate - netDeduct);
+    let autoSalary = 0;
+    
+    // Debug logging for OT-only scenarios
+    if (!amIn && !pmOut && otOut) {
+        console.log(`Row ${rowNum}: OT-only entry detected. OT OUT: ${otOut}, OT hours: ${otHours.toFixed(2)}, OT pay: ${otPay.toFixed(2)}`);
+    }
+    
+    if (isAbsent) {
+        autoSalary = 0;
+    } else if (hasTimeData) {
+        if (!amIn && !pmOut && otOut) {
+            // OT-only: no daily rate, OT goes to gross pay total only
+            autoSalary = 0;
+            console.log(`Row ${rowNum}: OT-only entry, per-row salary = 0 (OT in gross pay)`);
+        } else if (workHours === 0 && otHours === 0) {
+            // No work hours calculated = no pay (invalid or incomplete time entry)
+            autoSalary = 0;
+            console.log(`Row ${rowNum}: No work hours, per-row salary = 0`);
+        } else {
+            // Regular work: daily rate minus deductions (OT shown separately in summary)
+            autoSalary = dailyRate - totalDeductions;
+        }
+    }
+    
     const autoSalaryInput = document.querySelector(`input[name="auto_salary_${rowNum}"]`);
     if (autoSalaryInput) {
-        if (isAbsent || hasTimeData) {
-            autoSalaryInput.value = autoSalary.toFixed(2);
-        } else {
-            autoSalaryInput.value = '';
+        autoSalaryInput.value = autoSalary.toFixed(2);
+        // Mark Sunday rows with a data attribute for reference
+        autoSalaryInput.setAttribute('data-is-sunday', isSunday ? '1' : '0');
+        if (isSunday && autoSalary > 0) {
+            console.log(`Row ${rowNum}: Setting Sunday salary = ${autoSalary.toFixed(2)} with data-is-sunday=1`);
         }
     }
     
     // Recalculate totals
     calculateTotals();
+    
+    // Apply number formatting with commas for values >= 1000
+    applyNumberFormatting();
 }
 
 // Count working days excluding Sundays in a date range
@@ -4687,48 +6544,105 @@ function countWorkingDays(startDate, endDate) {
     return workingDays;
 }
 
-// Calculate trainee payment (number of trainees × payment per trainee)
-function calculateTraineePayment() {
-    const trainingsCount = parseFloat(document.getElementById('imported_trainings_count')?.value) || 0;
-    const paymentPerTrainee = parseFloat(document.getElementById('imported_payment_per_trainee')?.value) || 0;
-    const totalTraineeCost = trainingsCount * paymentPerTrainee;
+// Simple sync without formatting - called while typing
+function syncTrainingAmountSimple() {
+    const mainField = document.getElementById('training_amount_main');
+    const importedField = document.getElementById('imported_training_amount');
     
-    const trainingsCostField = document.getElementById('imported_trainings_cost');
-    if (trainingsCostField) {
-        trainingsCostField.value = totalTraineeCost.toFixed(2);
+    if (mainField && importedField) {
+        // Remove commas and parse the value
+        const value = parseFloat(mainField.value.replace(/,/g, '')) || 0;
+        importedField.value = value.toFixed(2);
+    }
+    
+    // Recalculate totals
+    calculateTotals();
+}
+
+// Format training amount with thousand separators
+function formatTrainingAmount(input) {
+    // Remove all non-numeric characters except decimal point
+    let value = input.value.replace(/[^0-9.]/g, '');
+    
+    // Ensure only one decimal point
+    const parts = value.split('.');
+    if (parts.length > 2) {
+        value = parts[0] + '.' + parts.slice(1).join('');
+    }
+    
+    // Limit to 2 decimal places
+    if (parts[1] && parts[1].length > 2) {
+        value = parts[0] + '.' + parts[1].substring(0, 2);
+    }
+    
+    // Parse the numeric value
+    const numericValue = parseFloat(value) || 0;
+    
+    // Format with thousand separators
+    const formatted = numericValue.toLocaleString('en-US', {
+        minimumFractionDigits: 2,
+        maximumFractionDigits: 2
+    });
+    
+    // Update the input
+    input.value = formatted;
+    
+    // Sync to imported section (store raw value)
+    syncTrainingAmount(numericValue);
+}
+
+// Sync training amount from main form to imported section
+function syncTrainingAmount(numericValue) {
+    const importedAmountField = document.getElementById('imported_training_amount');
+    
+    if (importedAmountField) {
+        importedAmountField.value = (numericValue || 0).toFixed(2);
     }
     
     // Recalculate totals to update net pay
     calculateTotals();
 }
 
-// Calculate main trainee payment from separate form
-function calculateMainTraineePayment() {
-    const traineeCount = parseFloat(document.getElementById('trainee_count_main')?.value) || 0;
-    const paymentPerTrainee = parseFloat(document.getElementById('trainee_payment_per_main')?.value) || 0;
-    const totalPayment = traineeCount * paymentPerTrainee;
+// Sync training amount from imported section to main form
+function syncImportedTrainingAmount() {
+    const importedAmount = parseFloat(document.getElementById('imported_training_amount')?.value) || 0;
+    const mainAmountField = document.getElementById('training_amount_main');
     
-    const totalField = document.getElementById('trainee_total_main');
-    if (totalField) {
-        totalField.value = totalPayment.toFixed(2);
+    if (mainAmountField) {
+        // Format with thousand separators
+        const formatted = importedAmount.toLocaleString('en-US', {
+            minimumFractionDigits: 2,
+            maximumFractionDigits: 2
+        });
+        mainAmountField.value = formatted;
     }
     
-    // Also update the imported section fields to sync data
-    const importedCountField = document.getElementById('imported_trainings_count');
-    const importedPaymentField = document.getElementById('imported_payment_per_trainee');
-    const importedTotalField = document.getElementById('imported_trainings_cost');
-    
-    if (importedCountField) importedCountField.value = traineeCount;
-    if (importedPaymentField) importedPaymentField.value = paymentPerTrainee.toFixed(2);
-    if (importedTotalField) importedTotalField.value = totalPayment.toFixed(2);
-    
-    // Recalculate totals to update net pay (use calculateTotals for main DTR table)
+    // Recalculate totals to update net pay
     calculateTotals();
+}
+
+// Sync training remarks from main form to imported section
+function syncTrainingRemarks() {
+    const mainRemarks = document.getElementById('training_remarks_main')?.value || '';
+    const importedRemarksField = document.getElementById('imported_training_remarks');
+    
+    if (importedRemarksField) {
+        importedRemarksField.value = mainRemarks;
+    }
+}
+
+// Sync training remarks from imported section to main form
+function syncImportedTrainingRemarks() {
+    const importedRemarks = document.getElementById('imported_training_remarks')?.value || '';
+    const mainRemarksField = document.getElementById('training_remarks_main');
+    
+    if (mainRemarksField) {
+        mainRemarksField.value = importedRemarks;
+    }
 }
 
 // Calculate all totals
 function calculateTotals() {
-    console.log('calculateTotals() called');
     let totalWorkHours = 0;
     let totalLateMins = 0;
     let totalUndertime = 0;
@@ -4746,10 +6660,12 @@ function calculateTotals() {
     let totalOTCalc = 0;
     let totalGovt = 0;
     let totalSalary = 0;
+    let totalSundaySalary = 0; // Track Sunday work separately to add to basic salary
+    let sundayTrainingCount = 0; // Count Sunday rows with training checked
+    let daysWorkedCount = 0; // Count total days worked including Sunday
     
     // Sum all rows
     const rowCount = document.querySelectorAll('#dtr_rows tr').length;
-    console.log('Processing', rowCount, 'rows for totals calculation');
     
     document.querySelectorAll('#dtr_rows tr').forEach(row => {
         const rowNum = row.getAttribute('data-row');
@@ -4763,7 +6679,6 @@ function calculateTotals() {
         totalUndertime += parseFloat(document.querySelector(`input[name="undertime_${rowNum}"]`).value) || 0;
         totalOTHours += parseFloat(document.querySelector(`input[name="ot_hours_${rowNum}"]`).value) || 0;
         totalAbsentDays += parseFloat(document.querySelector(`input[name="absent_day_${rowNum}"]`).value) || 0;
-        totalAbsentDeduct += parseFloat(document.querySelector(`input[name="absent_deduct_${rowNum}"]`).value) || 0;
         totalLateDeduct += parseFloat(document.querySelector(`input[name="late_deduct_${rowNum}"]`).value) || 0;
         totalUndertimeDeduct += parseFloat(document.querySelector(`input[name="undertime_deduct_${rowNum}"]`).value) || 0;
         
@@ -4786,12 +6701,39 @@ function calculateTotals() {
         const govtInput = document.querySelector(`input[name="govt_${rowNum}"]`);
         if (govtInput) totalGovt += parseFloat(govtInput.value) || 0;
         
+        // Separate Sunday salary from regular days and count days worked
         const salaryInput = document.querySelector(`input[name="auto_salary_${rowNum}"]`);
-        if (salaryInput) totalSalary += parseFloat(salaryInput.value) || 0;
+        if (salaryInput) {
+            let rowSalary = parseFormattedNumber(salaryInput.value);
+            const isSunday = salaryInput.getAttribute('data-is-sunday') === '1';
+            
+            // Count days actually worked (has salary value)
+            if (rowSalary > 0) {
+                daysWorkedCount++;
+            }
+            
+            // Check if this row has training checked
+            const trainingCheckbox = document.querySelector(`input[name="training_${rowNum}"]`);
+            const hasTraining = trainingCheckbox && trainingCheckbox.checked;
+            
+            if (isSunday) {
+                // Only count training on Sundays for Sunday training calculation
+                if (hasTraining) {
+                    sundayTrainingCount++;
+                    console.log(`Sunday row ${rowNum} has training checked. Row salary: ${rowSalary}`);
+                    // Training days have no salary - keep rowSalary as 0
+                    console.log(`  Training on Sunday - no salary applied. Total Sunday training days: ${sundayTrainingCount}`);
+                }
+                
+                totalSundaySalary += rowSalary; // Sunday work tracked separately
+                console.log(`Collecting Sunday salary: ${rowSalary}, Total so far: ${totalSundaySalary}`);
+            }
+            totalSalary += rowSalary; // All days for footer display
+        }
     });
     
     // Calculate total net deductions (include halfday deduction)
-    const totalNetDeduct = (totalAbsentDeduct + totalLateDeduct + totalUndertimeDeduct + totalHalfdayDeduct) - totalOTPay;
+    const totalNetDeduct = (totalLateDeduct + totalUndertimeDeduct + totalHalfdayDeduct) - totalOTPay;
     
     // Update totals row - values already in correct units (hours/minutes)
     const workHrsEl = document.getElementById('total_work_hours');
@@ -4815,92 +6757,84 @@ function calculateTotals() {
         lateMinsEl.textContent = Math.round(totalLateMins);
     }
     
-    // Update all totals with safety checks
+    // Update all totals with safety checks - use comma formatting for thousands
     const updateElement = (id, value) => {
         const el = document.getElementById(id);
         if (el) el.textContent = value;
     };
     
-    updateElement('total_undertime', totalUndertime.toFixed(2));
-    updateElement('total_ot_hours', totalOTHours.toFixed(2));
+    const formatWithCommas = (num) => num.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    
+    updateElement('total_undertime', formatWithCommas(totalUndertime));
+    updateElement('total_ot_hours', formatWithCommas(totalOTHours));
     updateElement('total_absent_days', totalAbsentDays);
-    updateElement('total_absent_deduct', totalAbsentDeduct.toFixed(2));
-    updateElement('total_late_deduct', totalLateDeduct.toFixed(2));
-    updateElement('total_undertime_deduct', totalUndertimeDeduct.toFixed(2));
-    updateElement('total_halfday_deduct', totalHalfdayDeduct.toFixed(2));
-    updateElement('total_ot_payment', totalOTPay.toFixed(2));
+    updateElement('total_late_deduct', formatWithCommas(totalLateDeduct));
+    updateElement('total_undertime_deduct', formatWithCommas(totalUndertimeDeduct));
+    updateElement('total_halfday_deduct', formatWithCommas(totalHalfdayDeduct));
+    updateElement('total_ot_payment', formatWithCommas(totalOTPay));
     
     // Update net deductions total
     const netDeductEl = document.getElementById('total_net_deductions');
-    if (netDeductEl) netDeductEl.textContent = totalNetDeduct.toFixed(2);
+    if (netDeductEl) netDeductEl.textContent = formatWithCommas(totalNetDeduct);
     
     // Update new columns totals
     const totalLateMinEl = document.getElementById('total_late_min');
-    if (totalLateMinEl) totalLateMinEl.textContent = totalLateMinCalc.toFixed(2);
+    if (totalLateMinEl) totalLateMinEl.textContent = formatWithCommas(totalLateMinCalc);
     
     const totalUndertimeCalcEl = document.getElementById('total_undertime_calc');
-    if (totalUndertimeCalcEl) totalUndertimeCalcEl.textContent = totalUndertimeCalc.toFixed(2);
+    if (totalUndertimeCalcEl) totalUndertimeCalcEl.textContent = formatWithCommas(totalUndertimeCalc);
     
     const totalOTCalcEl = document.getElementById('total_ot_calc');
-    if (totalOTCalcEl) totalOTCalcEl.textContent = totalOTCalc.toFixed(2);
+    if (totalOTCalcEl) totalOTCalcEl.textContent = formatWithCommas(totalOTCalc);
     
     const totalGovtEl = document.getElementById('total_govt');
-    if (totalGovtEl) totalGovtEl.textContent = totalGovt.toFixed(2);
+    if (totalGovtEl) totalGovtEl.textContent = formatWithCommas(totalGovt);
     
-    // Read trainee payment to add to total salary footer
-    const traineePaymentForFooter = parseFloat(document.getElementById('trainee_total_main')?.value) || 
-                                     parseFloat(document.getElementById('imported_trainings_cost')?.value) || 0;
+    // Read training amount (added to gross pay)
+    const traineePayment = parseFormattedNumber(document.getElementById('training_amount_main')?.value) || 
+                          parseFloat(document.getElementById('imported_training_amount')?.value) || 0;
     
-    // Add trainee payment to total salary for footer display
-    const totalSalaryWithTrainee = totalSalary + traineePaymentForFooter;
+    // Add trainee payment to total salary for footer display (Sunday pay already included in totalSalary)
+    const totalSalaryWithExtras = totalSalary + traineePayment;
     
     const totalSalaryEl = document.getElementById('total_salary');
-    if (totalSalaryEl) totalSalaryEl.textContent = totalSalaryWithTrainee.toFixed(2);
-    
-    console.log('✓ Totals updated:');
-    console.log('  - WorkHours:', totalWorkHours.toFixed(2));
-    console.log('  - Late Mins:', totalLateMins);
-    console.log('  - Undertime:', totalUndertime.toFixed(2));
-    console.log('  - OT Hours:', totalOTHours.toFixed(2));
-    console.log('  - Absent Days:', totalAbsentDays);
-    console.log('  - Total Deductions:', (totalAbsentDeduct + totalLateDeduct + totalUndertimeDeduct + totalHalfdayDeduct).toFixed(2));
-    console.log('  - OT Pay:', totalOTPay.toFixed(2));
-    console.log('  - Govt Benefits:', totalGovt.toFixed(2));
-    console.log('  - Net Salary (from rows):', totalSalary.toFixed(2));
-    console.log('  - Trainee Payment:', traineePaymentForFooter.toFixed(2));
-    console.log('  - Total Net Salary (with trainee):', totalSalaryWithTrainee.toFixed(2));
+    if (totalSalaryEl) totalSalaryEl.textContent = totalSalaryWithExtras.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
     
     // ── UPDATE NET PAY SUMMARY ──
-    // Read basic salary (from imported section or rate fields)
-    const grossPay = parseFloat(document.getElementById('imported_salary')?.value) || 0;
-    const sssDeduct = parseFloat(document.getElementById('imported_sss')?.value) || 0;
-    const philhealthDeduct = parseFloat(document.getElementById('imported_philhealth')?.value) || 0;
-    const pagibigDeduct = parseFloat(document.getElementById('imported_pagibig')?.value) || 0;
-    const govtDeductions = sssDeduct + philhealthDeduct + pagibigDeduct;
+    // Gross Pay = Total daily salaries (already has DTR deductions subtracted per row) + OT Pay + Training
+    // Take Home = Gross Pay - Government Benefits
     
-    // Read trainee payment from the main trainee form (most reliable source)
-    const traineeTotal = parseFloat(document.getElementById('trainee_total_main')?.value) || 
-                         parseFloat(document.getElementById('imported_trainings_cost')?.value) || 0;
+    // Update days worked count (includes Sunday if worked)
+    const daysOfficeEl = document.getElementById('imported_days_office');
+    if (daysOfficeEl) {
+        daysOfficeEl.value = daysWorkedCount;
+    }
     
-    console.log('Net Pay Calculation - TraineeTotal:', traineeTotal, 'GrossPay:', grossPay, 'GovtDeductions:', govtDeductions);
+    // totalSalary already includes all per-day salaries (daily rate - late/undertime/halfday deductions)
+    const totalDailySalaries = totalSalary;
     
-    const totalDTRDeductions = totalAbsentDeduct + totalLateDeduct + totalUndertimeDeduct + totalHalfdayDeduct;
+    // Gross Pay = sum of daily salaries + OT pay + training payment
+    // Add totalHalfdayDeduct back because halfday should NOT be deducted from gross, only from net
+    const grossPay = totalDailySalaries + totalHalfdayDeduct + totalOTPay + traineePayment;
     
-    // Check if there's any actual DTR data with values (not just empty rows)
-    const hasDTRData = totalWorkHours > 0 || totalDTRDeductions > 0 || totalOTPay > 0;
+    // Government deductions from column T
+    const govtDeductions = totalGovt;
     
-    // Calculate net pay:
-    // - If there's DTR data: use gross pay and apply all deductions/additions + trainee payment
-    // - If there's no DTR data but only trainee payment: net pay = trainee payment only
-    let netPay;
-    if (hasDTRData) {
-        // Standard calculation: Gross Pay - Deductions + Earnings
-        netPay = grossPay - totalDTRDeductions - govtDeductions + totalOTPay + traineeTotal;
-        console.log('NetPay (with DTR):', netPay, '= GrossPay', grossPay, '- DTRDeduct', totalDTRDeductions, '- GovtDeduct', govtDeductions, '+ OTPay', totalOTPay, '+ Trainee', traineeTotal);
-    } else {
-        // No DTR data, only trainee payment
-        netPay = traineeTotal;
-        console.log('NetPay (no DTR, trainee only):', netPay);
+    // Take Home = Gross Pay - Halfday Deduction - Government Benefits
+    const takeHome = grossPay - totalHalfdayDeduct - govtDeductions;
+    
+    console.log(`Pay Calculation:`);
+    console.log(`  Total Daily Salaries: ₱${totalDailySalaries.toLocaleString('en-US', {minimumFractionDigits: 2})}`);
+    console.log(`  OT Pay: ₱${totalOTPay.toLocaleString('en-US', {minimumFractionDigits: 2})}`);
+    console.log(`  Training: ₱${traineePayment.toLocaleString('en-US', {minimumFractionDigits: 2})}`);
+    console.log(`  Gross Pay: ₱${grossPay.toLocaleString('en-US', {minimumFractionDigits: 2})}`);
+    console.log(`  Gov't Benefits: ₱${govtDeductions.toLocaleString('en-US', {minimumFractionDigits: 2})}`);
+    console.log(`  Take Home: ₱${takeHome.toLocaleString('en-US', {minimumFractionDigits: 2})}`);
+    
+    // Update Gross Pay display
+    const grossPayEl = document.getElementById('imported_gross');
+    if (grossPayEl) {
+        grossPayEl.value = grossPay.toFixed(2);
     }
     
     // Update summary display elements
@@ -4908,15 +6842,19 @@ function calculateTotals() {
         const el = document.getElementById(id);
         if (el) el.textContent = value;
     };
-    setTotal('summary_total_deductions', '-₱' + (totalDTRDeductions + govtDeductions).toLocaleString('en-PH', {minimumFractionDigits: 2}));
+    setTotal('summary_total_salary', '₱' + totalDailySalaries.toLocaleString('en-PH', {minimumFractionDigits: 2}));
     setTotal('summary_ot_pay', '+₱' + totalOTPay.toLocaleString('en-PH', {minimumFractionDigits: 2}));
-    setTotal('summary_trainee_payment', '+₱' + traineeTotal.toLocaleString('en-PH', {minimumFractionDigits: 2}));
-    setTotal('summary_net_pay', '₱' + netPay.toLocaleString('en-PH', {minimumFractionDigits: 2}));
+    setTotal('summary_trainee_payment', '+₱' + traineePayment.toLocaleString('en-PH', {minimumFractionDigits: 2}));
+    setTotal('summary_gross_pay', '₱' + grossPay.toLocaleString('en-PH', {minimumFractionDigits: 2}));
+    setTotal('summary_govt_deductions', '-₱' + govtDeductions.toLocaleString('en-PH', {minimumFractionDigits: 2}));
+    setTotal('summary_net_pay', '₱' + takeHome.toLocaleString('en-PH', {minimumFractionDigits: 2}));
+    
+    // Apply number formatting with commas
+    applyNumberFormatting();
 }
 
 // Recalculate all DTR rows (manual trigger button)
 function recalculateAllDTR() {
-    console.log('Manual recalculate all triggered');
     updateAllRates(); // Ensure rates are current
     
     const dtrRows = document.getElementById('dtr_rows');
@@ -4933,7 +6871,6 @@ function recalculateAllDTR() {
         }
     });
     calculateTotals();
-    console.log(`Recalculated ${count} rows`);
 }
 
 // Attach event listeners to DTR inputs
@@ -4941,7 +6878,9 @@ function attachDTRListeners() {
     document.querySelectorAll('.dtr-input, .dtr-absent, .dtr-date-input').forEach(input => {
         // Remove existing listener to avoid duplicates
         input.removeEventListener('change', handleDTRInputChange);
+        input.removeEventListener('input', handleDTRInputChange);
         input.addEventListener('change', handleDTRInputChange);
+        input.addEventListener('input', handleDTRInputChange);
     });
     
     // Attach listeners to manual govt input fields
@@ -4950,6 +6889,23 @@ function attachDTRListeners() {
         input.addEventListener('input', handleManualInputChange);
     });
     
+    // Attach listeners to training checkboxes for trainee classification
+    document.querySelectorAll('.dtr-training').forEach(checkbox => {
+        checkbox.removeEventListener('change', handleTrainingCheckboxChange);
+        checkbox.addEventListener('change', handleTrainingCheckboxChange);
+    });
+
+    // Attach listeners to per-day override toggles and inputs
+    document.querySelectorAll('.dtr-day-override-toggle').forEach(toggle => {
+        toggle.removeEventListener('change', handleDayOverrideToggle);
+        toggle.addEventListener('change', handleDayOverrideToggle);
+        const rowNum = toggle.getAttribute('data-row');
+        if (toggle.checked) {
+            seedDayOverrideValues(rowNum);
+        }
+        applyDayOverrideState(rowNum, toggle.checked);
+    });
+
     // Rate changes recalculate all
     document.querySelectorAll('#hourly_rate, #ot_rate, #daily_rate').forEach(input => {
         input.removeEventListener('input', handleRateChange);
@@ -4967,11 +6923,16 @@ function attachDTRListeners() {
         input.removeEventListener('input', handleTimeInputValidation);
         input.addEventListener('input', handleTimeInputValidation);
     });
+
+    updateCheckedDaysVisuals();
 }
 
 // Handler functions to avoid duplicate listeners
 function handleDTRInputChange() {
     const rowNum = this.getAttribute('data-row');
+    if (rowNum) {
+        setHeaderContextForRow(rowNum);
+    }
     calculateRowDTR(rowNum);
 }
 
@@ -4980,6 +6941,11 @@ function handleManualInputChange() {
 }
 
 function handleRateChange() {
+    if (window.checkedDaysEditMode && this && this.id === 'daily_rate') {
+        applyCheckedDaysHeaderValuesToRows();
+        return;
+    }
+
     document.querySelectorAll('#dtr_rows tr').forEach(row => {
         const rowNum = row.getAttribute('data-row');
         calculateRowDTR(rowNum);
@@ -4995,7 +6961,7 @@ function handleAbsentCheckboxChange() {
     if (!row) return;
     
     // Find all time input fields in this row (now using text inputs with class time24)
-    const timeInputs = row.querySelectorAll('input.time24');
+    const timeInputs = row.querySelectorAll('.dtr-input.time24');
     
     timeInputs.forEach(input => {
         if (isAbsent) {
@@ -5012,8 +6978,219 @@ function handleAbsentCheckboxChange() {
         }
     });
     
+    // Find and disable/enable training checkbox
+    const trainingCheckbox = row.querySelector('.dtr-training');
+    if (trainingCheckbox) {
+        if (isAbsent) {
+            // Disable training checkbox when marked as absent
+            trainingCheckbox.disabled = true;
+            trainingCheckbox.checked = false;
+            trainingCheckbox.style.cursor = 'not-allowed';
+        } else {
+            // Enable training checkbox when not absent
+            trainingCheckbox.disabled = false;
+            trainingCheckbox.style.cursor = 'pointer';
+        }
+    }
+
+    // Disable per-day override controls when absent is checked
+    const dayOverrideToggle = row.querySelector('.dtr-day-override-toggle');
+    if (dayOverrideToggle) {
+        if (isAbsent) {
+            if (dayOverrideToggle.checked && String(window.activeDayOverrideRow) === String(rowNum)) {
+                window.activeDayOverrideRow = null;
+                markActiveDayOverrideRow(null);
+                restoreGlobalRateFieldSnapshot();
+                window.globalRateFieldSnapshot = null;
+                updateRatesFromDaily();
+            }
+            dayOverrideToggle.checked = false;
+            dayOverrideToggle.disabled = true;
+            delete window.dayOverrideValues[rowNum];
+        } else {
+            dayOverrideToggle.disabled = false;
+            applyDayOverrideState(rowNum, dayOverrideToggle.checked);
+        }
+    }
+
+    updateCheckedDaysVisuals();
+    
     // Recalculate the row
     calculateRowDTR(rowNum);
+}
+
+// Handler for training checkbox - set salary to 0 and disable other fields
+function handleTrainingCheckboxChange() {
+    const rowNum = this.getAttribute('data-row');
+    const isTraining = this.checked;
+    const row = this.closest('tr');
+    
+    if (!row) return;
+    
+    if (isTraining) {
+        // Training checked: Disable ALL other fields and set salary to 0 (no pay for training days)
+        console.log(`Training checked on row ${rowNum} - disabling fields and setting salary to 0`);
+        
+        // Disable time inputs (AM IN, PM OUT, OT OUT)
+        row.querySelectorAll('.dtr-input.time24').forEach(input => {
+            input.disabled = true;
+            input.style.backgroundColor = '#f0f0f0';
+            input.style.cursor = 'not-allowed';
+            input.value = ''; // Clear values
+        });
+        
+        // Disable absent checkbox
+        const absentCheckbox = row.querySelector('.dtr-absent');
+        if (absentCheckbox) {
+            absentCheckbox.checked = false;
+            absentCheckbox.disabled = true;
+            absentCheckbox.style.cursor = 'not-allowed';
+        }
+        
+        // Disable all auto-calculation fields except net salary
+        row.querySelectorAll('.dtr-calc, .dtr-deduct, .dtr-pay, .dtr-auto-calc').forEach(input => {
+            if (!input.classList.contains('dtr-auto-salary')) {
+                input.disabled = true;
+                input.style.backgroundColor = '#f0f0f0';
+                input.style.cursor = 'not-allowed';
+                input.style.opacity = '0.6';
+                input.value = '0.00'; // Clear values
+            }
+        });
+        
+        // Set net salary to 0 (training days have no salary, like absent)
+        const netSalaryInput = row.querySelector('.dtr-auto-salary');
+        if (netSalaryInput) {
+            netSalaryInput.value = '0.00';
+            netSalaryInput.disabled = false;
+            netSalaryInput.style.backgroundColor = '';
+            netSalaryInput.style.opacity = '1';
+        }
+
+        // Disable per-day override controls during training mode
+        const dayOverrideToggle = row.querySelector('.dtr-day-override-toggle');
+        if (dayOverrideToggle) {
+            if (dayOverrideToggle.checked && String(window.activeDayOverrideRow) === String(rowNum)) {
+                window.activeDayOverrideRow = null;
+                markActiveDayOverrideRow(null);
+                restoreGlobalRateFieldSnapshot();
+                window.globalRateFieldSnapshot = null;
+                updateRatesFromDaily();
+            }
+            dayOverrideToggle.checked = false;
+            dayOverrideToggle.disabled = true;
+            delete window.dayOverrideValues[rowNum];
+        }
+        
+    } else {
+        // Training unchecked: Enable all fields for normal DTR calculations
+        console.log(`Training unchecked on row ${rowNum} - enabling fields`);
+        
+        // Enable time inputs
+        row.querySelectorAll('.dtr-input.time24').forEach(input => {
+            input.disabled = false;
+            input.style.backgroundColor = '';
+            input.style.cursor = '';
+        });
+        
+        // Enable absent checkbox
+        const absentCheckbox = row.querySelector('.dtr-absent');
+        if (absentCheckbox) {
+            absentCheckbox.disabled = false;
+            absentCheckbox.style.cursor = 'pointer';
+        }
+        
+        // Enable all calculation fields
+        row.querySelectorAll('.dtr-calc, .dtr-deduct, .dtr-pay, .dtr-auto-calc').forEach(input => {
+            input.disabled = false;
+            input.style.backgroundColor = '';
+            input.style.cursor = '';
+            input.style.opacity = '1';
+        });
+        
+        // Clear net salary and recalculate from time entries
+        const netSalaryInput = row.querySelector('.dtr-auto-salary');
+        if (netSalaryInput) {
+            netSalaryInput.value = '0.00';
+        }
+
+        // Re-enable per-day override controls
+        const dayOverrideToggle = row.querySelector('.dtr-day-override-toggle');
+        if (dayOverrideToggle) {
+            dayOverrideToggle.disabled = false;
+            applyDayOverrideState(rowNum, dayOverrideToggle.checked);
+        }
+        
+        // Recalculate row to update salary based on time entries
+        calculateRowDTR(rowNum);
+    }
+    
+    // Always keep training checkbox and government benefits ENABLED
+    const trainingCheckbox = row.querySelector('.dtr-training');
+    if (trainingCheckbox) {
+        trainingCheckbox.disabled = false;
+        trainingCheckbox.style.cursor = 'pointer';
+    }
+    
+    const govtInput = row.querySelector('.dtr-manual');
+    if (govtInput) {
+        govtInput.disabled = false;
+        govtInput.style.backgroundColor = '';
+        govtInput.style.cursor = 'text';
+        govtInput.readOnly = false;
+        govtInput.style.opacity = '1';
+    }
+    
+    // Recalculate totals to update basic salary with Sunday training
+    calculateTotals();
+    updateCheckedDaysVisuals();
+    
+    console.log(`Training checkbox changed on row ${rowNum}, totals recalculated`);
+}
+
+// Auto-generate training  remarks based on checked training checkboxes in DTR
+function updateTrainingRemarksFromDTR() {
+    const trainingDates = [];
+    const rows = document.querySelectorAll('#dtr_rows tr[data-row]');
+    
+    rows.forEach(row => {
+        const rowNum = row.getAttribute('data-row');
+        const trainingCheckbox = row.querySelector(`input[name="training_${rowNum}"]`);
+        const dateInput = row.querySelector(`input[name="dtr_date_${rowNum}"]`);
+        
+        if (trainingCheckbox && trainingCheckbox.checked && dateInput && dateInput.value) {
+            // Format the date nicely (e.g., "Apr 15" from "2025-04-15")
+            try {
+                const date = new Date(dateInput.value);
+                const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", 
+                                    "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+                const formattedDate = `${monthNames[date.getMonth()]} ${date.getDate()}`;
+                trainingDates.push(formattedDate);
+            } catch (e) {
+                // If date parsing fails, just use the raw date
+                trainingDates.push(dateInput.value);
+            }
+        }
+    });
+    
+    // Generate remarks text
+    let remarksText = '';
+    if (trainingDates.length > 0) {
+        remarksText = `Training Days: ${trainingDates.join(', ')}`;
+    }
+    
+    // Update both remarks fields
+    const importedRemarksEl = document.getElementById('imported_training_remarks');
+    const mainRemarksEl = document.getElementById('training_remarks_main');
+    
+    if (importedRemarksEl) {
+        importedRemarksEl.value = remarksText;
+    }
+    if (mainRemarksEl) {
+        mainRemarksEl.value = remarksText;
+    }
+    
+    console.log(`Training remarks updated: ${remarksText}`);
 }
 
 // Handler for time input changes
@@ -5040,17 +7217,396 @@ function validateRowInputs(rowNum) {
     const pmOut = row.querySelector(`input[name="pm_out_${rowNum}"]`);
     const absentCheckbox = row.querySelector(`input[name="absent_${rowNum}"]`);
     
-    // If absent is checked, disable all time inputs
+    // If absent is checked, disable all time inputs and training checkbox
     if (absentCheckbox && absentCheckbox.checked) {
-        const timeInputs = row.querySelectorAll('input.time24');
+        const timeInputs = row.querySelectorAll('.dtr-input.time24');
         timeInputs.forEach(input => {
             input.disabled = true;
             input.value = '';
             input.style.backgroundColor = '#f0f0f0';
             input.style.cursor = 'not-allowed';
         });
+        
+        // Also disable training checkbox
+        const trainingCheckbox = row.querySelector('.dtr-training');
+        if (trainingCheckbox) {
+            trainingCheckbox.disabled = true;
+            trainingCheckbox.checked = false;
+            trainingCheckbox.style.cursor = 'not-allowed';
+        }
         return;
     }
+}
+
+// ================================================================
+// TRAINEE CLASSIFICATION HANDLING
+// ================================================================
+let currentEmployeeClassification = null; // Track current employee classification
+
+/**
+ * Configure UI for trainer classification
+ * - Disable all columns EXCEPT Training and Government Benefits
+ * - Set default daily rate to 500
+ * - Disable: Basic Salary, Late Start, End Time, OT Rate
+ * - Enable: Per/Day (editable), Per/Hour, Per/Min (computed)
+ */
+function configureForTrainer() {
+    console.log('configureForTrainer() called');
+    
+    // Hide Basic Salary container for trainer classification
+    const basicSalaryContainer = document.getElementById('basic_salary_container');
+    if (basicSalaryContainer) {
+        basicSalaryContainer.style.display = 'none';
+    }
+    
+    // Hide OT Rate container for trainer classification
+    const otRateContainer = document.getElementById('ot_rate_container');
+    if (otRateContainer) {
+        otRateContainer.style.display = 'none';
+    }
+    
+    // Set default daily rate to 500 for trainee
+    const dailyRateInput = document.getElementById('daily_rate');
+    if (dailyRateInput) {
+        dailyRateInput.value = '500.00';
+        dailyRateInput.disabled = false; // Keep it editable
+    }
+    
+    // Disable Basic Salary field (also hide it)
+    const basicSalaryInput = document.getElementById('basic_monthly_salary');
+    if (basicSalaryInput) {
+        basicSalaryInput.disabled = true;
+        basicSalaryInput.style.opacity = '0.5';
+        basicSalaryInput.style.cursor = 'not-allowed';
+    }
+    
+    // Disable OT Rate field
+    const otRateInput = document.getElementById('ot_rate');
+    if (otRateInput) {
+        otRateInput.disabled = true;
+        otRateInput.style.opacity = '0.5';
+        otRateInput.style.cursor = 'not-allowed';
+    }
+    
+    // Disable Late Start field
+    const lateThresholdInput = document.getElementById('late_threshold');
+    if (lateThresholdInput) {
+        lateThresholdInput.disabled = true;
+        lateThresholdInput.style.opacity = '0.5';
+        lateThresholdInput.style.cursor = 'not-allowed';
+    }
+    
+    // Disable End Time field
+    const endThresholdInput = document.getElementById('end_threshold');
+    if (endThresholdInput) {
+        endThresholdInput.disabled = true;
+        endThresholdInput.style.opacity = '0.5';
+        endThresholdInput.style.cursor = 'not-allowed';
+    }
+    
+    // For trainer classification, training checkboxes control individual rows
+    // No blanket restrictions - each row is controlled by its training checkbox
+    
+    // Update DTR title to show Trainer classification
+    updateDTRTitle('trainer');
+    
+    // Calculate rates from daily rate
+    updateRatesFromDaily();
+}
+
+/**
+ * Disable all DTR row inputs except Training checkbox and Government Benefits input
+ */
+function disableDTRColumnsExceptTrainerFields() {
+    const rows = document.querySelectorAll('#dtr_rows tr');
+    rows.forEach(row => {
+        // Disable time inputs (AM IN, PM OUT, OT OUT)
+        row.querySelectorAll('.dtr-input.time24').forEach(input => {
+            input.disabled = true;
+            input.style.backgroundColor = '#f0f0f0';
+            input.style.cursor = 'not-allowed';
+        });
+        
+        // Disable absent checkbox
+        const absentCheckbox = row.querySelector('.dtr-absent');
+        if (absentCheckbox) {
+            absentCheckbox.disabled = true;
+            absentCheckbox.style.cursor = 'not-allowed';
+        }
+        
+        // Disable all auto-calculation fields (work hours, late, undertime, OT, absent days, deductions, OT pay, net deduct)
+        row.querySelectorAll('.dtr-calc, .dtr-deduct, .dtr-pay, .dtr-auto-calc').forEach(input => {
+            input.disabled = true;
+            input.style.backgroundColor = '#f0f0f0';
+            input.style.cursor = 'not-allowed';
+            input.style.opacity = '0.6';
+        });
+        
+        // Keep training checkbox ENABLED
+        const trainingCheckbox = row.querySelector('.dtr-training');
+        if (trainingCheckbox) {
+            trainingCheckbox.disabled = false;
+            trainingCheckbox.style.cursor = 'pointer';
+        }
+        
+        // Keep government benefits input ENABLED
+        const govtInput = row.querySelector('.dtr-manual');
+        if (govtInput) {
+            govtInput.disabled = false;
+            govtInput.style.backgroundColor = '';
+            govtInput.style.cursor = 'text';
+            govtInput.readOnly = false;
+            govtInput.style.opacity = '1';
+        }
+        
+        // Keep Net Salary ENABLED (but still readonly - will be calculated by training checkbox)
+        const netSalaryInput = row.querySelector('.dtr-auto-salary');
+        if (netSalaryInput) {
+            netSalaryInput.disabled = false;
+            netSalaryInput.style.backgroundColor = '';
+            netSalaryInput.style.cursor = '';
+            netSalaryInput.style.opacity = '1';
+        }
+    });
+}
+
+/**
+ * Configure UI for non-trainer (regular) classification
+ * - Enable all columns
+ * - Enable all rate fields
+ */
+function configureForRegular() {
+    // Show Basic Salary container for regular classification
+    const basicSalaryContainer = document.getElementById('basic_salary_container');
+    if (basicSalaryContainer) {
+        basicSalaryContainer.style.display = '';
+    }
+    
+    // Show OT Rate container for regular classification
+    const otRateContainer = document.getElementById('ot_rate_container');
+    if (otRateContainer) {
+        otRateContainer.style.display = '';
+    }
+    
+    // Enable Basic Salary field
+    const basicSalaryInput = document.getElementById('basic_monthly_salary');
+    if (basicSalaryInput) {
+        basicSalaryInput.disabled = false;
+        basicSalaryInput.style.opacity = '1';
+        basicSalaryInput.style.cursor = 'text';
+    }
+    
+    // Enable OT Rate field
+    const otRateInput = document.getElementById('ot_rate');
+    if (otRateInput) {
+        otRateInput.disabled = false;
+        otRateInput.style.opacity = '1';
+        otRateInput.style.cursor = 'text';
+    }
+    
+    // Enable Late Start field
+    const lateThresholdInput = document.getElementById('late_threshold');
+    if (lateThresholdInput) {
+        lateThresholdInput.disabled = false;
+        lateThresholdInput.style.opacity = '1';
+        lateThresholdInput.style.cursor = 'text';
+    }
+    
+    // Enable End Time field
+    const endThresholdInput = document.getElementById('end_threshold');
+    if (endThresholdInput) {
+        endThresholdInput.disabled = false;
+        endThresholdInput.style.opacity = '1';
+        endThresholdInput.style.cursor = 'text';
+    }
+    
+    // Update DTR title to show Regular classification
+    updateDTRTitle('regular');
+    
+    // Enable all DTR row inputs
+    enableAllDTRColumns();
+}
+
+/**
+ * Configure UI for fixed rate classification
+ * - Enable all rate fields (like regular employees)
+ * - Apply training checkbox states - only disable fields in rows where training is checked
+ */
+function configureForFixedRate() {
+    // Show Basic Salary container for fixed rate classification
+    const basicSalaryContainer = document.getElementById('basic_salary_container');
+    if (basicSalaryContainer) {
+        basicSalaryContainer.style.display = '';
+    }
+    
+    // Show OT Rate container for fixed rate classification
+    const otRateContainer = document.getElementById('ot_rate_container');
+    if (otRateContainer) {
+        otRateContainer.style.display = '';
+    }
+    
+    // Enable Basic Salary field
+    const basicSalaryInput = document.getElementById('basic_monthly_salary');
+    if (basicSalaryInput) {
+        basicSalaryInput.disabled = false;
+        basicSalaryInput.style.opacity = '1';
+        basicSalaryInput.style.cursor = 'text';
+    }
+    
+    // Enable OT Rate field
+    const otRateInput = document.getElementById('ot_rate');
+    if (otRateInput) {
+        otRateInput.disabled = false;
+        otRateInput.style.opacity = '1';
+        otRateInput.style.cursor = 'text';
+    }
+    
+    // Enable Late Start field
+    const lateThresholdInput = document.getElementById('late_threshold');
+    if (lateThresholdInput) {
+        lateThresholdInput.disabled = false;
+        lateThresholdInput.style.opacity = '1';
+        lateThresholdInput.style.cursor = 'text';
+    }
+    
+    // Enable End Time field
+    const endThresholdInput = document.getElementById('end_threshold');
+    if (endThresholdInput) {
+        endThresholdInput.disabled = false;
+        endThresholdInput.style.opacity = '1';
+        endThresholdInput.style.cursor = 'text';
+    }
+    
+    // First, enable all DTR columns
+    enableAllDTRColumns();
+    
+    // Then, for rows where training checkbox is checked, disable fields except govt benefits and net salary
+    const rows = document.querySelectorAll('#dtr_rows tr');
+    rows.forEach(row => {
+        const trainingCheckbox = row.querySelector('.dtr-training');
+        if (trainingCheckbox && trainingCheckbox.checked) {
+            // Disable time inputs (AM IN, PM OUT, OT OUT)
+            row.querySelectorAll('.dtr-input.time24').forEach(input => {
+                input.disabled = true;
+                input.style.backgroundColor = '#f0f0f0';
+                input.style.cursor = 'not-allowed';
+            });
+            
+            // Disable absent checkbox
+            const absentCheckbox = row.querySelector('.dtr-absent');
+            if (absentCheckbox) {
+                absentCheckbox.disabled = true;
+                absentCheckbox.style.cursor = 'not-allowed';
+            }
+            
+            // Disable all auto-calculation fields
+            row.querySelectorAll('.dtr-calc, .dtr-deduct, .dtr-pay, .dtr-auto-calc').forEach(input => {
+                input.disabled = true;
+                input.style.backgroundColor = '#f0f0f0';
+                input.style.cursor = 'not-allowed';
+                input.style.opacity = '0.6';
+            });
+            
+            // Keep government benefits ENABLED
+            const govtInput = row.querySelector('.dtr-manual');
+            if (govtInput) {
+                govtInput.disabled = false;
+                govtInput.style.backgroundColor = '';
+                govtInput.style.cursor = 'text';
+                govtInput.readOnly = false;
+                govtInput.style.opacity = '1';
+            }
+            
+            // Keep Net Salary ENABLED and set to 0 when training is checked (no pay for training days)
+            const netSalaryInput = row.querySelector('.dtr-auto-salary');
+            if (netSalaryInput) {
+                netSalaryInput.disabled = false;
+                netSalaryInput.style.backgroundColor = '';
+                netSalaryInput.style.cursor = '';
+                netSalaryInput.style.opacity = '1';
+                netSalaryInput.value = '0.00';
+            }
+        }
+    });
+    
+    // Update DTR title to show Fixed Rate classification
+    updateDTRTitle('fixedrate');
+}
+
+/**
+ * Update DTR Calculator title based on classification
+ * @param {string} classification - 'trainer', 'fixedrate', or 'regular'
+ */
+function updateDTRTitle(classification) {
+    const titleElement = document.querySelector('.tb5-title');
+    if (!titleElement) return;
+    
+    const normalized = (classification || '').toLowerCase().replace(/\s+/g, '');
+    
+    switch (normalized) {
+        case 'trainer':
+            titleElement.textContent = 'DTR CALCULATOR - TRAINER';
+            break;
+        case 'fixedrate':
+            titleElement.textContent = 'DTR CALCULATOR - FIXED RATE';
+            break;
+        case 'regular':
+            titleElement.textContent = 'DTR CALCULATOR - REGULAR';
+            break;
+        default:
+            titleElement.textContent = 'DTR CALCULATOR - FIXED RATE';
+            break;
+    }
+}
+
+/**
+ * Enable all DTR row inputs for regular employees
+ */
+function enableAllDTRColumns() {
+    const rows = document.querySelectorAll('#dtr_rows tr');
+    rows.forEach(row => {
+        // Enable time inputs (unless disabled by absent checkbox)
+        const absentCheckbox = row.querySelector('.dtr-absent');
+        const isAbsent = absentCheckbox && absentCheckbox.checked;
+        
+        row.querySelectorAll('.dtr-input.time24').forEach(input => {
+            if (!isAbsent) {
+                input.disabled = false;
+                input.style.backgroundColor = '';
+                input.style.cursor = '';
+            }
+        });
+        
+        // Enable absent checkbox
+        if (absentCheckbox) {
+            absentCheckbox.disabled = false;
+            absentCheckbox.style.cursor = 'pointer';
+        }
+        
+        // Enable training checkbox
+        const trainingCheckbox = row.querySelector('.dtr-training');
+        if (trainingCheckbox) {
+            trainingCheckbox.disabled = false;
+            trainingCheckbox.style.cursor = 'pointer';
+        }
+        
+        // Enable government benefits input
+        const govtInput = row.querySelector('.dtr-manual');
+        if (govtInput) {
+            govtInput.disabled = false;
+            govtInput.style.cursor = 'text';
+            govtInput.style.backgroundColor = '';
+            govtInput.style.opacity = '1';
+        }
+        
+        // Enable all auto-calculation fields (were disabled for trainee)
+        row.querySelectorAll('.dtr-calc, .dtr-deduct, .dtr-pay, .dtr-auto-calc, .dtr-auto-salary').forEach(input => {
+            input.disabled = false;
+            input.style.backgroundColor = '';
+            input.style.cursor = '';
+            input.style.opacity = '1';
+        });
+    });
 }
 
 // Load employee data when selected
@@ -5068,6 +7624,32 @@ document.getElementById('employee_select').addEventListener('change', function()
     const position = selectedOption.getAttribute('data-position');
     const department = selectedOption.getAttribute('data-department');
     const salary = selectedOption.getAttribute('data-salary');
+    const classification = selectedOption.getAttribute('data-classification');
+    
+    console.log('Employee selected:', {
+        id: employeeId,
+        name: employeeName,
+        classification: classification,
+        salary: salary
+    });
+    
+    // Store current classification
+    currentEmployeeClassification = classification;
+    
+    // Configure UI based on classification (handle both "fixedrate" and "fixed rate")
+    const normalizedClass = (classification || '').toLowerCase().replace(/\s+/g, '');
+    console.log('Normalized classification:', normalizedClass);
+    
+    if (normalizedClass === 'trainer') {
+        configureForTrainer();
+    } else if (normalizedClass === 'fixedrate') {
+        configureForFixedRate();
+    } else {
+        configureForRegular();
+    }
+    
+    // Check for existing periods and filter them
+    filterExistingPeriods();
     
     // Load additional employee data via AJAX
     fetch('get_employee_details.php?id=' + employeeId)
@@ -5083,39 +7665,67 @@ document.getElementById('employee_select').addEventListener('change', function()
             // Set hidden form values
             document.getElementById('form_employee_id').value = employeeId;
             
-            // Set rate fields
-            if (data.per_hour_rate) document.getElementById('hourly_rate').value = data.per_hour_rate;
-            if (data.overtime_rate) document.getElementById('ot_rate').value = data.overtime_rate;
-            if (data.per_day_rate) document.getElementById('daily_rate').value = data.per_day_rate;
+            // Set rate fields (skip if trainer - already set to 500)
+            if (classification && classification.toLowerCase() === 'trainer') {
+                // For trainer, daily rate is already set to 500 by configureForTrainer()
+                // But allow override if data has a specific rate
+                if (data.per_day_rate) {
+                    document.getElementById('daily_rate').value = data.per_day_rate;
+                }
+            } else {
+                // For regular employees, use data from database
+                if (data.per_hour_rate) document.getElementById('hourly_rate').value = data.per_hour_rate;
+                if (data.overtime_rate) document.getElementById('ot_rate').value = data.overtime_rate;
+                if (data.per_day_rate) document.getElementById('daily_rate').value = data.per_day_rate;
+            }
             
-            // Update TB5 header with employee name and salary
+            // Update TB5 header with employee name
             const tb5NameEl = document.getElementById('tb5_employee_name');
             if (tb5NameEl) tb5NameEl.textContent = employeeName || '-';
             
-            // Update basic salary field if available
+            // Update basic salary field if available (not for trainee)
             const basicSalaryField = document.getElementById('basic_monthly_salary');
-            if (basicSalaryField && salary) {
-                basicSalaryField.value = salary;
+            if (basicSalaryField && salary && !(classification && classification.toLowerCase() === 'trainer')) {
+                // Reset to employee's base salary - clear any Sunday work from previous period
+                delete basicSalaryField.dataset.originalMonthlyValue;
+                basicSalaryField.title = ''; // Clear tooltip
+                
+                // Format with commas
+                const salaryValue = parseFloat(salary);
+                basicSalaryField.value = salaryValue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                
+                // Store the ORIGINAL base salary in a permanent data attribute (used for per day calculations)
+                basicSalaryField.dataset.originalBaseSalary = salaryValue.toFixed(2);
+                
                 // Trigger rate calculations
                 updateAllRates();
+            } else if (classification && classification.toLowerCase() === 'trainer') {
+                // For trainee, calculate rates from daily rate
+                updateRatesFromDaily();
             }
             
             // Show the form
             document.getElementById('payslip_form').style.display = 'block';
+            console.log('Payslip form displayed');
             
-            // Auto-generate 31 DTR rows
-            generate31DTRRows();
+            // Generate DTR rows based on period selection (or 31 rows if no period)
+            const yearVal = document.getElementById('payroll_year').value;
+            const monthVal = document.getElementById('payroll_month').value;
+            const cutoffVal = document.getElementById('payroll_cutoff').value;
             
-            // Generate DTR rows if period is already selected (for date population)
-            const periodSelect = document.getElementById('payroll_period');
-            if (periodSelect.value) {
-                const periodOption = periodSelect.options[periodSelect.selectedIndex];
-                const startDate = periodOption.getAttribute('data-start');
-                const endDate = periodOption.getAttribute('data-end');
-                if (startDate && endDate) {
-                    generateDTRRows(startDate, endDate);
-                }
+            console.log('Period values:', { year: yearVal, month: monthVal, cutoff: cutoffVal });
+            
+            if (yearVal && monthVal && cutoffVal) {
+                // Period is selected, generate rows for that period
+                console.log('Generating DTR rows for period');
+                updatePayrollPeriod();
+            } else {
+                // No period selected yet, generate 31 rows
+                console.log('Generating 31 default DTR rows');
+                generate31DTRRows();
             }
+            
+            console.log('DTR generation complete, row count:', document.querySelectorAll('#dtr_rows tr').length);
         })
         .catch(error => {
             console.error('Error:', error);
@@ -5134,14 +7744,31 @@ document.getElementById('employee_select').addEventListener('change', function()
             // Update basic salary if available
             const basicSalaryField = document.getElementById('basic_monthly_salary');
             if (basicSalaryField && salary) {
-                basicSalaryField.value = salary;
+                // Reset to employee's base salary - clear any Sunday work from previous period
+                delete basicSalaryField.dataset.originalMonthlyValue;
+                basicSalaryField.title = ''; // Clear tooltip
+                
+                const salaryNum = parseFloat(salary) || 0;
+                basicSalaryField.value = salaryNum.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                
+                // Store the ORIGINAL base salary in a permanent data attribute (used for per day calculations)
+                basicSalaryField.dataset.originalBaseSalary = salaryNum.toFixed(2);
+                
                 updateAllRates();
             }
             
             document.getElementById('payslip_form').style.display = 'block';
             
-            // Auto-generate 31 DTR rows even on error
-            generate31DTRRows();
+            // Generate DTR rows based on period selection (or 31 rows if no period)
+            const yearVal = document.getElementById('payroll_year').value;
+            const monthVal = document.getElementById('payroll_month').value;
+            const cutoffVal = document.getElementById('payroll_cutoff').value;
+            
+            if (yearVal && monthVal && cutoffVal) {
+                updatePayrollPeriod();
+            } else {
+                generate31DTRRows();
+            }
         });
 });
 
@@ -5169,8 +7796,13 @@ function calculatePeriodFromDate(dateStr) {
         payDate = new Date(year, month, 27);
     }
     
-    // Format dates as YYYY-MM-DD
-    const formatDate = (d) => d.toISOString().split('T')[0];
+    // Format dates as YYYY-MM-DD (using local date to avoid timezone issues)
+    const formatDate = (d) => {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
     
     return {
         start: formatDate(startDate),
@@ -5192,8 +7824,8 @@ function updateCutoffOptions() {
         // Reset to default if year or month not selected
         cutoffSelect.innerHTML = `
             <option value="">Cut-off</option>
-            <option value="12">12th (1-15 period)</option>
-            <option value="27">27th (16-end period)</option>
+            <option value="12">1st Cut-off (1–15)</option>
+            <option value="27">2nd Cut-off (16–31)</option>
         `;
         return;
     }
@@ -5209,13 +7841,59 @@ function updateCutoffOptions() {
     // Update options with dynamic last day
     cutoffSelect.innerHTML = `
         <option value="">Cut-off</option>
-        <option value="12">12th (1-15 period)</option>
-        <option value="27">27th (16-${lastDay} period)</option>
+        <option value="12">1st Cut-off (1–15)</option>
+        <option value="27">2nd Cut-off (16–${lastDay})</option>
     `;
     
     // Restore selection if it was previously set
     if (currentValue) {
         cutoffSelect.value = currentValue;
+    }
+    
+    // Check for existing DTR and disable those periods
+    filterExistingPeriods();
+}
+
+// Filter out periods that already have DTR records for selected employee
+async function filterExistingPeriods() {
+    const employeeId = document.getElementById('employee_select').value;
+    const year = document.getElementById('payroll_year').value;
+    const month = document.getElementById('payroll_month').value;
+    
+    if (!employeeId || !year || !month) {
+        return;
+    }
+    
+    try {
+        const response = await fetch(`get_dtr_records.php?employee_id=${employeeId}&year=${year}&month=${month}&check_periods=1`);
+        const data = await response.json();
+        
+        if (data.success && data.existing_periods) {
+            const cutoffSelect = document.getElementById('payroll_cutoff');
+            const options = cutoffSelect.querySelectorAll('option');
+            
+            // Reset all options first
+            options.forEach(option => {
+                option.disabled = false;
+                option.style.color = '';
+                option.style.fontStyle = '';
+                // Remove existing "(Already has records)" text if present
+                option.textContent = option.textContent.replace(/ \(Already has records\)/g, '');
+            });
+            
+            // Disable options that have existing records
+            options.forEach(option => {
+                const cutoffValue = option.value;
+                if (cutoffValue && data.existing_periods.includes(parseInt(cutoffValue))) {
+                    option.disabled = true;
+                    option.textContent = option.textContent + ' (Already has records)';
+                    option.style.color = '#999';
+                    option.style.fontStyle = 'italic';
+                }
+            });
+        }
+    } catch (error) {
+        console.error('Error checking existing periods:', error);
     }
 }
 
@@ -5225,7 +7903,21 @@ function updatePayrollPeriod() {
     const month = document.getElementById('payroll_month').value;
     const cutoff = document.getElementById('payroll_cutoff').value;
     
+    console.log(`updatePayrollPeriod called: Year=${year}, Month=${month}, Cutoff=${cutoff}`);
+    
     if (!year || !month || !cutoff) {
+        console.log('Missing year, month, or cutoff - returning');
+        return;
+    }
+    
+    // Check if employee is selected - required for DTR generation
+    const employeeId = document.getElementById('employee_select')?.value;
+    console.log(`Employee ID: ${employeeId || 'not selected'}`);
+    
+    // Only check if form is visible (employee has been selected at some point)
+    const payslipForm = document.getElementById('payslip_form');
+    if (payslipForm && payslipForm.style.display === 'none') {
+        console.log('Payslip form not visible - skipping DTR row generation');
         return;
     }
     
@@ -5249,12 +7941,22 @@ function updatePayrollPeriod() {
         payDate = new Date(yearInt, monthIndex, 27);
     }
     
-    // Format dates as YYYY-MM-DD
-    const formatDate = (d) => d.toISOString().split('T')[0];
+    // Format dates as YYYY-MM-DD (using local date to avoid timezone issues)
+    const formatDate = (d) => {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
+    
+    const formattedStart = formatDate(startDate);
+    const formattedEnd = formatDate(endDate);
+    
+    console.log(`Period calculated: ${formattedStart} to ${formattedEnd}`);
     
     // Update hidden fields
-    document.getElementById('calculated_start_date').value = formatDate(startDate);
-    document.getElementById('calculated_end_date').value = formatDate(endDate);
+    document.getElementById('calculated_start_date').value = formattedStart;
+    document.getElementById('calculated_end_date').value = formattedEnd;
     document.getElementById('calculated_pay_date').value = formatDate(payDate);
     
     // Update display fields with proper formatting
@@ -5270,17 +7972,96 @@ function updatePayrollPeriod() {
     // document.getElementById('display_pay_date').textContent = payDateDisplay;
     // document.getElementById('display_period').textContent = periodDisplay;
     
-    // Generate DTR rows if employee is selected
-    const employeeSelect = document.getElementById('employee_select');
-    if (employeeSelect.value) {
-        generateDTRRows(formatDate(startDate), formatDate(endDate));
+    // If second cutoff, fetch basic salary from first cutoff to carry forward
+    if (cutoffDay === 27) {
+        const employeeId = document.getElementById('employee_select')?.value;
+        if (employeeId) {
+            fetchPreviousPeriodBasicSalary(employeeId, yearInt, monthIndex, formattedStart);
+        }
     }
+    
+    // Generate DTR rows for the selected period
+    console.log(`Calling generateDTRRows with: ${formattedStart} to ${formattedEnd}`);
+    generateDTRRows(formattedStart, formattedEnd);
+}
+
+// Fetch basic salary from previous period (first cutoff) to carry forward to second cutoff
+function fetchPreviousPeriodBasicSalary(employeeId, year, monthIndex, currentPeriodStart) {
+    // Calculate first cutoff period dates
+    const firstCutoffStart = new Date(year, monthIndex, 1);
+    const firstCutoffEnd = new Date(year, monthIndex, 15);
+    // Format dates as YYYY-MM-DD (using local date to avoid timezone issues)
+    const formatDate = (d) => {
+        const year = d.getFullYear();
+        const month = String(d.getMonth() + 1).padStart(2, '0');
+        const day = String(d.getDate()).padStart(2, '0');
+        return `${year}-${month}-${day}`;
+    };
+    
+    const previousStart = formatDate(firstCutoffStart);
+    const previousEnd = formatDate(firstCutoffEnd);
+    
+    console.log(`Fetching basic salary from previous period: ${previousStart} to ${previousEnd}`);
+    
+    // Fetch saved payroll record from first cutoff
+    fetch(`get_employee_payslips.php?employee_id=${employeeId}&period_start=${previousStart}&period_end=${previousEnd}`)
+        .then(response => response.json())
+        .then(data => {
+            console.log('Previous period response:', data);
+            
+            if (data.success && data.payslips && data.payslips.length > 0) {
+                // Get the most recent payslip from first cutoff
+                const previousPayslip = data.payslips[0];
+                const previousBasicSalary = parseFloat(previousPayslip.basic_monthly_salary) || 0;
+                
+                if (previousBasicSalary > 0) {
+                    console.log(`Found previous period basic salary: ₱${previousBasicSalary.toLocaleString('en-US', {minimumFractionDigits: 2})}`);
+                    
+                    const basicSalaryField = document.getElementById('basic_monthly_salary');
+                    if (basicSalaryField) {
+                        // Set the field to the carried-forward value
+                        basicSalaryField.value = previousBasicSalary.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+                        
+                        // Set originalMonthlyValue to this carried-forward amount (this is the baseline for this period)
+                        basicSalaryField.dataset.originalMonthlyValue = previousBasicSalary.toFixed(2);
+                        
+                        // Ensure originalBaseSalary stays as the employee's base salary for per day calculations
+                        if (!basicSalaryField.dataset.originalBaseSalary) {
+                            // If not set, get from employee record (should be already set, but just in case)
+                            const employeeSelect = document.getElementById('employee_select');
+                            const selectedOption = employeeSelect?.options[employeeSelect.selectedIndex];
+                            const baseSalary = selectedOption?.getAttribute('data-salary') || previousBasicSalary;
+                            basicSalaryField.dataset.originalBaseSalary = parseFloat(baseSalary).toFixed(2);
+                        }
+                        
+                        console.log(`Carried forward basic salary to second cutoff: ₱${previousBasicSalary.toLocaleString('en-US', {minimumFractionDigits: 2})}`);
+                        console.log(`originalBaseSalary (for per day calc): ${basicSalaryField.dataset.originalBaseSalary}`);
+                        console.log(`originalMonthlyValue (baseline for this period): ${basicSalaryField.dataset.originalMonthlyValue}`);
+                        
+                        // Recalculate rates (per day will use originalBaseSalary, not the carried-forward value)
+                        updateAllRates();
+                    }
+                } else {
+                    console.log('Previous period basic salary is 0 or invalid');
+                }
+            } else {
+                console.log('No previous period payslip found - using employee base salary');
+            }
+        })
+        .catch(error => {
+            console.error('Error fetching previous period:', error);
+        });
 }
 
 // Reset form
 if (document.getElementById('btn_reset')) {
-    document.getElementById('btn_reset').addEventListener('click', function() {
-        if (confirm('Are you sure you want to reset the form?')) {
+    document.getElementById('btn_reset').addEventListener('click', async function() {
+        const confirmed = await showCustomConfirm(
+            'Are you sure you want to reset the form? All unsaved data will be lost.',
+            'Reset Form',
+            'warning'
+        );
+        if (confirmed) {
             document.getElementById('payroll_form').reset();
             document.getElementById('dtr_rows').innerHTML = '';
             updateRowCount();
@@ -5333,15 +8114,39 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // File input change handler - auto-import when file is selected
+    // File input change handler - auto-import when file(s) are selected
     if (fileInput) {
         fileInput.addEventListener('change', function() {
             if (this.files.length > 0) {
-                handleFileSelect(this.files[0]);
-                // Auto-import after file selection
-                setTimeout(() => {
-                    importDTRFromExcel();
-                }, 300);
+                if (this.files.length === 1) {
+                    // Single file - show preview then import
+                    handleFileSelect(this.files[0]);
+                    setTimeout(() => {
+                        importDTRFromExcelMulti([this.files[0]]);
+                    }, 300);
+                } else {
+                    // Multiple files - import all sequentially
+                    const fileArray = Array.from(this.files);
+                    showImportStatus('loading', `Importing ${fileArray.length} Excel files...`);
+                    
+                    // Show combined file preview
+                    const preview = document.getElementById('file_selected_preview');
+                    if (preview) {
+                        const names = fileArray.map(f => f.name).join(', ');
+                        preview.innerHTML = `
+                            <i class="fas fa-file-excel"></i>
+                            <span>${fileArray.length} files: ${names}</span>
+                            <button type="button" class="btn-remove-file" onclick="removeSelectedFile(event)">
+                                <i class="fas fa-times"></i>
+                            </button>
+                        `;
+                        preview.style.display = 'flex';
+                    }
+                    
+                    setTimeout(() => {
+                        importDTRFromExcelMulti(fileArray);
+                    }, 300);
+                }
             }
         });
     }
@@ -5401,42 +8206,7 @@ document.addEventListener('DOMContentLoaded', function() {
         });
     }
     
-    // Sync trainee form with imported section on page load
-    syncTraineeFormFromImported();
-    
-    // Add change listeners to imported trainee fields to sync with main form
-    const importedTrainingsCount = document.getElementById('imported_trainings_count');
-    const importedPaymentPerTrainee = document.getElementById('imported_payment_per_trainee');
-    
-    if (importedTrainingsCount) {
-        importedTrainingsCount.addEventListener('input', syncMainFormFromImported);
-    }
-    if (importedPaymentPerTrainee) {
-        importedPaymentPerTrainee.addEventListener('input', syncMainFormFromImported);
-    }
 });
-
-// Sync main trainee form from imported section
-function syncMainFormFromImported() {
-    const importedCount = parseFloat(document.getElementById('imported_trainings_count')?.value) || 0;
-    const importedPayment = parseFloat(document.getElementById('imported_payment_per_trainee')?.value) || 0;
-    
-    const mainCountField = document.getElementById('trainee_count_main');
-    const mainPaymentField = document.getElementById('trainee_payment_per_main');
-    const mainTotalField = document.getElementById('trainee_total_main');
-    
-    if (mainCountField) mainCountField.value = importedCount;
-    if (mainPaymentField) mainPaymentField.value = importedPayment.toFixed(2);
-    if (mainTotalField) mainTotalField.value = (importedCount * importedPayment).toFixed(2);
-    
-    // Recalculate totals to update net pay display
-    calculateTotals();
-}
-
-// Sync trainee form from imported section on page load
-function syncTraineeFormFromImported() {
-    syncMainFormFromImported();
-}
 
 // Generate 31 empty TB5 rows
 function generateTB5Rows(startDate = null) {
@@ -5712,19 +8482,16 @@ function validateTB5RowInputs(day) {
 
 // Calculate a single TB5 row
 function calculateTB5Row(day) {
-    const salary = parseFloat(document.getElementById('imported_salary')?.value) || 13000;
-    // Use custom daily rate input if set, otherwise calculate based on working days
+    const salary = parseFloat(document.getElementById('imported_salary')?.value) || 0;
+    // Daily rate must be manually entered - NO automatic calculation
     const dailyRateInput = document.getElementById('daily_rate');
     let dailyRate;
     
     if (dailyRateInput && dailyRateInput.value) {
         dailyRate = parseFloat(dailyRateInput.value);
     } else {
-        // Calculate based on working days (excluding Sundays) in the period
-        const periodStart = document.getElementById('imported_period_start')?.value;
-        const periodEnd = document.getElementById('imported_period_end')?.value;
-        const workingDays = countWorkingDays(periodStart, periodEnd) || 15; // Fallback to 15
-        dailyRate = salary / workingDays;
+        // No automatic calculation - rate must be entered manually
+        dailyRate = 0;
     }
     
     const hourlyRate = dailyRate / 8;
@@ -5760,7 +8527,7 @@ function calculateTB5Row(day) {
     
     // Read configurable thresholds from UI inputs
     const thresholdInput = document.getElementById('late_threshold');
-    let graceEndMins = 7 * 60 + 35; // Default: 7:35 AM (TB5 K3)
+    let graceEndMins = 8 * 60 + 5; // Default: 8:05 AM (grace period ends at 8:05)
     if (thresholdInput && thresholdInput.value) {
         const parsed = parseTimeToMinutes(thresholdInput.value);
         if (parsed !== null) graceEndMins = parsed;
@@ -5789,9 +8556,11 @@ function calculateTB5Row(day) {
         const actualAmOut = Math.min(amOut, schedAmOut);
         workMins += Math.max(0, actualAmOut - actualAmIn);
         
-        // Late: arrival after grace end time (TB5 K3)
+        // Late: arrival after grace end time (calculated from scheduled start, not grace end)
+        // Grace period: 8:00 AM (scheduled start) to 8:05 AM (grace end)
+        // Arrive at 8:05 or before = 0 late; Arrive at 8:06 = 6 minutes late
         if (amIn > graceEndMins) {
-            lateMins += amIn - graceEndMins;
+            lateMins += amIn - schedAmIn;
         }
         if (amOut < schedAmOut) {
             utMins += schedAmOut - amOut;
@@ -5936,19 +8705,30 @@ function updateTB5Totals() {
     setTotal('total_half_ded', totalHalfDed.toFixed(2));
     setTotal('total_ot_pay', totalOtPay.toFixed(2));
     
-    // Update payroll summary fields (TB5: Net = Monthly Salary - Deductions + OT + Trainee Payment)
-    const salary = parseFloat(document.getElementById('imported_salary')?.value) || 0;
+    // Update payroll summary: Gross = Total Daily Salaries + OT + Training, Take Home = Gross - Govt
+    const trainingAmount = parseFloat(document.getElementById('imported_training_amount')?.value) || 0;
     
-    // Calculate daily rate based on working days (excluding Sundays) in the period
-    const periodStart = document.getElementById('imported_period_start')?.value;
-    const periodEnd = document.getElementById('imported_period_end')?.value;
-    const workingDays = countWorkingDays(periodStart, periodEnd) || 15; // Fallback to 15 if no dates
-    const dailyRate = salary / workingDays; // Divide by working days excluding Sundays
+    // Total daily salaries from TB5 (already has DTR deductions subtracted per row)
+    // daysWorked × daily rate approximation from existing totalSalary isn't available here,
+    // so we sum salary cells directly
+    let totalDailySalaries = 0;
+    for (let day = 1; day <= 31; day++) {
+        const salaryCell = document.querySelector(`.tb5-salary[data-day="${day}"]`);
+        if (salaryCell) totalDailySalaries += parseFloat(salaryCell.textContent) || 0;
+    }
     
-    const grossPay = salary; // TB5: Base is full monthly salary
-    const totalDeductions = totalAbsentDed + totalLateDed + totalUtDed + totalHalfDed;
-    const trainingsCost = parseFloat(document.getElementById('imported_trainings_cost')?.value) || 0;
-    const netPay = grossPay - totalDeductions + totalOtPay + trainingsCost; // Add trainee payment to net pay
+    // Gross Pay = daily salaries + OT + training
+    // Add totalHalfDed back because halfday should NOT be deducted from gross, only from net
+    const grossPay = totalDailySalaries + totalHalfDed + totalOtPay + trainingAmount;
+    
+    // Government deductions from TB5 govt column
+    let totalGovt = 0;
+    for (let day = 1; day <= 31; day++) {
+        const govtCell = document.querySelector(`.tb5-govt[data-day="${day}"]`);
+        if (govtCell) totalGovt += parseFloat(govtCell.textContent) || 0;
+    }
+    
+    const takeHome = grossPay - totalHalfDed - totalGovt;
     
     // Set summary values
     const daysOfficeEl = document.getElementById('imported_days_office');
@@ -5957,10 +8737,12 @@ function updateTB5Totals() {
     const grossEl = document.getElementById('imported_gross');
     if (grossEl) grossEl.value = grossPay.toFixed(2);
     
-    setTotal('summary_total_deductions', '-₱' + totalDeductions.toLocaleString('en-PH', {minimumFractionDigits: 2}));
+    setTotal('summary_total_salary', '₱' + totalDailySalaries.toLocaleString('en-PH', {minimumFractionDigits: 2}));
     setTotal('summary_ot_pay', '+₱' + totalOtPay.toLocaleString('en-PH', {minimumFractionDigits: 2}));
-    setTotal('summary_trainee_payment', '+₱' + trainingsCost.toLocaleString('en-PH', {minimumFractionDigits: 2}));
-    setTotal('summary_net_pay', '₱' + netPay.toLocaleString('en-PH', {minimumFractionDigits: 2}));
+    setTotal('summary_trainee_payment', '+₱' + trainingAmount.toLocaleString('en-PH', {minimumFractionDigits: 2}));
+    setTotal('summary_gross_pay', '₱' + grossPay.toLocaleString('en-PH', {minimumFractionDigits: 2}));
+    setTotal('summary_govt_deductions', '-₱' + totalGovt.toLocaleString('en-PH', {minimumFractionDigits: 2}));
+    setTotal('summary_net_pay', '₱' + takeHome.toLocaleString('en-PH', {minimumFractionDigits: 2}));
 }
 
 // Update TB5 rates display
@@ -6029,10 +8811,11 @@ function generatePayslipFromTB5() {
         alert('Please enter employee name');
         return;
     }
-    if (!salary) {
-        alert('Please enter basic monthly salary');
-        return;
-    }
+    // Basic salary is optional - allow saving with just per day rate
+    // if (!salary) {
+    //     alert('Please enter basic monthly salary');
+    //     return;
+    // }
     
     // Collect TB5 data
     const totalAbsentDed = parseFloat(document.getElementById('total_absent_ded').textContent) || 0;
@@ -6040,11 +8823,12 @@ function generatePayslipFromTB5() {
     const totalUtDed = parseFloat(document.getElementById('total_ut_ded').textContent) || 0;
     const totalHalfDed = parseFloat(document.getElementById('total_half_ded').textContent) || 0;
     const totalOtPay = parseFloat(document.getElementById('total_ot_pay').textContent) || 0;
+    const trainingAmt = parseFloat(document.getElementById('imported_training_amount')?.value) || 0;
     
-    const totalDeductions = totalAbsentDed + totalLateDed + totalUtDed + totalHalfDed;
-    const netPay = salary - totalDeductions + totalOtPay;
+    const grossPay = parseFloat(document.getElementById('imported_gross')?.value) || 0;
+    const takeHome = parseFloat(document.getElementById('summary_net_pay')?.textContent?.replace(/[^\d.-]/g, '')) || 0;
     
-    alert(`Payslip Summary for ${employeeName}:\n\nBasic Salary: ₱${salary.toFixed(2)}\nTotal Deductions: ₱${totalDeductions.toFixed(2)}\nOT Pay: ₱${totalOtPay.toFixed(2)}\n\nNet Pay: ₱${netPay.toFixed(2)}`);
+    alert(`Payslip Summary for ${employeeName}:\n\nGross Pay: ₱${grossPay.toFixed(2)}\nOT Pay: ₱${totalOtPay.toFixed(2)}\nTraining: ₱${trainingAmt.toFixed(2)}\n\nTake Home: ₱${takeHome.toFixed(2)}`);
 }
 
 // ================================
@@ -6059,18 +8843,19 @@ function saveDTRToDatabase() {
     // New payroll summary fields
     const daysOffice = parseInt(document.getElementById('imported_days_office')?.value) || 0;
     const grossPay = parseFloat(document.getElementById('imported_gross')?.value) || 0;
-    const trainingsCount = parseInt(document.getElementById('imported_trainings_count')?.value) || 0;
-    const trainingsCost = parseFloat(document.getElementById('imported_trainings_cost')?.value) || 0;
+    const trainingAmount = parseFloat(document.getElementById('imported_training_amount')?.value) || 0;
+    const trainingRemarks = document.getElementById('imported_training_remarks')?.value?.trim() || '';
     
     if (!employeeName) {
         alert('Please enter employee name');
         return;
     }
     
-    if (!salary || salary <= 0) {
-        alert('Please enter a valid basic monthly salary');
-        return;
-    }
+    // Basic salary is optional - allow saving with just per day rate
+    // if (!salary || salary <= 0) {
+    //     alert('Please enter a valid basic monthly salary');
+    //     return;
+    // }
     
     // Collect DTR data from TB5 table
     const dtrRecords = [];
@@ -6091,9 +8876,11 @@ function saveDTRToDatabase() {
             pm_in:             document.querySelector(`input[name="tb5_pm_in_${day}"]`)?.value  || '',
             pm_out:            document.querySelector(`input[name="tb5_pm_out_${day}"]`)?.value || '',
             is_absent:         document.querySelector(`input[name="tb5_absent_${day}"]`)?.checked ? 1 : 0,
+            is_training:       document.querySelector(`input[name="tb5_training_${day}"]`)?.checked ? 1 : 0,
             ot_out:            document.querySelector(`input[name="tb5_ot_out_${day}"]`)?.value  || '',
             half_in:           document.querySelector(`input[name="tb5_half_in_${day}"]`)?.value || '',
             half_out:          document.querySelector(`input[name="tb5_half_out_${day}"]`)?.value || '',
+            is_halfday:        halfDed > 0 ? 1 : 0,
             remarks:           document.querySelector(`input[name="tb5_remarks_${day}"]`)?.value || '',
             // Computed fields from span cells
             total_work_hours:  parseFloat((workMins / 60).toFixed(4)),
@@ -6134,13 +8921,31 @@ function saveDTRToDatabase() {
     formData.append('action', 'save_dtr');
     formData.append('employee_name', employeeName);
     formData.append('salary', salary);
+    
+    // Send the ACTUAL rates from input fields (TB5 format - imported_salary is the basic salary)
+    const dailyRateInput = document.getElementById('daily_rate');
+    const dailyRateValue = dailyRateInput ? parseFloat(dailyRateInput.value) : 0;
+    formData.append('per_day_rate', dailyRateValue);
+    
+    // TB5 uses hourly_rate and ot_rate input fields
+    const hourlyRateValue = parseFloat(document.getElementById('hourly_rate')?.textContent) || (dailyRateValue / 8);
+    const minuteRateValue = parseFloat(document.getElementById('minute_rate')?.textContent) || (hourlyRateValue / 60);
+    const otRateValue = parseFloat(document.getElementById('ot_rate')?.value) || (hourlyRateValue * 1.25);
+    
+    formData.append('per_hour_rate', hourlyRateValue);
+    formData.append('per_minute_rate', minuteRateValue);
+    formData.append('ot_rate', otRateValue);
+    
     formData.append('period_start', periodStart);
     formData.append('period_end', periodEnd);
     formData.append('days_office', daysOffice);
-    formData.append('gross_pay', grossPay);
-    formData.append('trainings_count', trainingsCount);
-    formData.append('payment_per_trainee', parseFloat(document.getElementById('imported_payment_per_trainee')?.value) || 0);
-    formData.append('trainings_cost', trainingsCost);
+    // Adjust gross_pay: remove OT and training (they're added separately in save_dtr.php)
+    // grossPay from imported_gross already has halfday added back (from updateTB5Totals)
+    const grossPayForDB = grossPay - totalOtPayAmt - trainingAmount;
+    formData.append('gross_pay', grossPayForDB);
+    formData.append('training_amount', trainingAmount);
+    formData.append('trainings_cost', trainingAmount);
+    formData.append('training_remarks', trainingRemarks);
     // Summary totals for payroll_computations
     formData.append('total_late_hours',      totalLateHours);
     formData.append('total_undertime_hours', totalUndertimeHrs);
@@ -6155,7 +8960,11 @@ function saveDTRToDatabase() {
     formData.append('sss_contribution',       0);
     formData.append('philhealth_contribution', 0);
     formData.append('pagibig_contribution',   0);
+    formData.append('late_threshold', document.getElementById('late_threshold')?.value || '8:00');
+    formData.append('end_threshold', document.getElementById('end_threshold')?.value || '17:00');
+    formData.append('classification', currentEmployeeClassification || '');
     formData.append('dtr_records', JSON.stringify(dtrRecords));
+    formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '');
 
     fetch('save_dtr.php', {
         method: 'POST',
@@ -6194,6 +9003,9 @@ function saveMainDTRToDatabase() {
     let periodStart = '';
     let periodEnd = '';
 
+    // Get the basic salary field to check for original value (before Sunday work addition)
+    const basicSalaryField = document.getElementById('basic_monthly_salary');
+    
     if (currentPayrollMode === 'manual') {
         // Manual mode: get from dropdowns
         const employeeSelect = document.getElementById('employee_select');
@@ -6201,14 +9013,29 @@ function saveMainDTRToDatabase() {
         employeeName = employeeSelect
             ? (employeeSelect.options[employeeSelect.selectedIndex]?.getAttribute('data-name') || '')
             : '';
-        salary = parseFloat(document.getElementById('basic_monthly_salary')?.value) || 0;
+        
+        // Use ORIGINAL monthly salary (before Sunday work was added) for saving
+        // This ensures the employee's base salary is preserved correctly in the database
+        if (basicSalaryField?.dataset.originalMonthlyValue) {
+            salary = parseFloat(basicSalaryField.dataset.originalMonthlyValue);
+        } else {
+            salary = parseFormattedNumber(basicSalaryField?.value) || 0;
+        }
+        
         periodStart = document.getElementById('calculated_start_date')?.value || '';
         periodEnd   = document.getElementById('calculated_end_date')?.value   || '';
     } else {
         // Import mode: get from imported data fields
         employeeName = document.getElementById('imported_employee_name')?.value || '';
-        salary = parseFloat(document.getElementById('imported_salary')?.value) || 
-                 parseFloat(document.getElementById('basic_monthly_salary')?.value) || 0;
+        
+        // Use ORIGINAL monthly salary (before Sunday work was added) for saving
+        if (basicSalaryField?.dataset.originalMonthlyValue) {
+            salary = parseFloat(basicSalaryField.dataset.originalMonthlyValue);
+        } else {
+            salary = parseFormattedNumber(document.getElementById('imported_salary')?.value) || 
+                     parseFormattedNumber(basicSalaryField?.value) || 0;
+        }
+        
         periodStart = document.getElementById('imported_period_start')?.value || '';
         periodEnd   = document.getElementById('imported_period_end')?.value   || '';
         employeeId = document.getElementById('form_employee_id')?.value || 'imported';
@@ -6224,11 +9051,12 @@ function saveMainDTRToDatabase() {
         alert('Please import an Excel file first or enter the employee name.');
         return;
     }
-    if (!salary || salary <= 0) {
-        alert('Please enter a valid basic monthly salary.');
-        document.getElementById('basic_monthly_salary')?.focus();
-        return;
-    }
+    // Basic salary is optional - allow saving with just per day rate
+    // if (!salary || salary <= 0) {
+    //     alert('Please enter a valid basic monthly salary.');
+    //     document.getElementById('basic_monthly_salary')?.focus();
+    //     return;
+    // }
     if (!periodStart || !periodEnd) {
         alert('Please select a payroll period (year, month, and cut-off) first.');
         return;
@@ -6247,6 +9075,7 @@ function saveMainDTRToDatabase() {
         const dateInput = row.querySelector(`input[name="dtr_date_${rowNum}"]`);
         if (!dateInput || !dateInput.value) return;
 
+        const halfdayDeduct = parseFloat(row.querySelector(`input[name="halfday_deduct_${rowNum}"]`)?.value) || 0;
         dtrRecords.push({
             dtr_date:       dateInput.value,
             am_in:          row.querySelector(`input[name="am_in_${rowNum}"]`)?.value        || '',
@@ -6254,9 +9083,11 @@ function saveMainDTRToDatabase() {
             pm_in:          row.querySelector(`input[name="pm_in_${rowNum}"]`)?.value        || '',
             pm_out:         row.querySelector(`input[name="pm_out_${rowNum}"]`)?.value       || '',
             is_absent:      row.querySelector(`input[name="absent_${rowNum}"]`)?.checked ? 1 : 0,
+            is_training:    row.querySelector(`input[name="training_${rowNum}"]`)?.checked ? 1 : 0,
             ot_out:         row.querySelector(`input[name="ot_out_${rowNum}"]`)?.value       || '',
             half_in:        row.querySelector(`input[name="halfday_in_${rowNum}"]`)?.value   || '',
             half_out:       row.querySelector(`input[name="halfday_out_${rowNum}"]`)?.value  || '',
+            is_halfday:     halfdayDeduct > 0 ? 1 : 0,
             total_work_hours: parseFloat(row.querySelector(`input[name="work_hours_${rowNum}"]`)?.value) || 0,
             late_minutes:   parseFloat(row.querySelector(`input[name="late_mins_${rowNum}"]`)?.value)    || 0,
             undertime_hours:parseFloat(row.querySelector(`input[name="undertime_${rowNum}"]`)?.value)    || 0,
@@ -6264,10 +9095,10 @@ function saveMainDTRToDatabase() {
             absent_deduct:  parseFloat(row.querySelector(`input[name="absent_deduct_${rowNum}"]`)?.value)|| 0,
             late_deduct:    parseFloat(row.querySelector(`input[name="late_deduct_${rowNum}"]`)?.value)  || 0,
             undertime_deduct:parseFloat(row.querySelector(`input[name="undertime_deduct_${rowNum}"]`)?.value)||0,
-            halfday_deduct: parseFloat(row.querySelector(`input[name="halfday_deduct_${rowNum}"]`)?.value)||0,
+            halfday_deduct: halfdayDeduct,
             ot_pay:         parseFloat(row.querySelector(`input[name="ot_pay_${rowNum}"]`)?.value)       || 0,
             govt_deduct:    parseFloat(row.querySelector(`input[name="govt_${rowNum}"]`)?.value)         || 0,
-            auto_salary:    parseFloat(row.querySelector(`input[name="auto_salary_${rowNum}"]`)?.value)  || 0,
+            auto_salary:    parseFormattedNumber(row.querySelector(`input[name="auto_salary_${rowNum}"]`)?.value),
             remarks:        row.querySelector(`input[name="remarks_${rowNum}"]`)?.value                  || ''
         });
     });
@@ -6289,18 +9120,31 @@ function saveMainDTRToDatabase() {
     });
 
     // Collect computed totals from the totals footer row
-    const totalWorkMins     = parseFloat(document.getElementById('total_work_mins')?.textContent)      || 0;
-    const totalLateHours    = parseFloat(document.getElementById('total_late_hours')?.textContent)     || 0;
-    const totalUndertime    = parseFloat(document.getElementById('total_undertime')?.textContent)      || 0;
-    const totalOtHours      = parseFloat(document.getElementById('total_ot_hours')?.textContent)       || 0;
-    const totalAbsentDays   = parseFloat(document.getElementById('total_absent_days')?.textContent)    || 0;
-    const totalAbsentDeduct = parseFloat(document.getElementById('total_absent_deduct')?.textContent)  || 0;
-    const totalLateDeduct   = parseFloat(document.getElementById('total_late_deduct')?.textContent)    || 0;
-    const totalUtDeduct     = parseFloat(document.getElementById('total_undertime_deduct')?.textContent)||0;
-    const totalHalfDeduct   = parseFloat(document.getElementById('total_halfday_deduct')?.textContent) || 0;
-    const totalOtPay        = parseFloat(document.getElementById('total_ot_payment')?.textContent)     || 0;
-    const totalSalary       = parseFloat(document.getElementById('total_salary')?.textContent)         || 0;
+    // Use parseFormattedNumber to handle comma-formatted values (e.g. "50,000.00")
+    const totalWorkMins     = parseFormattedNumber(document.getElementById('total_work_mins')?.textContent);
+    const totalLateHours    = parseFormattedNumber(document.getElementById('total_late_hours')?.textContent);
+    const totalUndertime    = parseFormattedNumber(document.getElementById('total_undertime')?.textContent);
+    const totalOtHours      = parseFormattedNumber(document.getElementById('total_ot_hours')?.textContent);
+    const totalAbsentDays   = parseFormattedNumber(document.getElementById('total_absent_days')?.textContent);
+    const totalLateDeduct   = parseFormattedNumber(document.getElementById('total_late_deduct')?.textContent);
+    const totalUtDeduct     = parseFormattedNumber(document.getElementById('total_undertime_deduct')?.textContent);
+    const totalHalfDeduct   = parseFormattedNumber(document.getElementById('total_halfday_deduct')?.textContent);
+    const totalOtPay        = parseFormattedNumber(document.getElementById('total_ot_payment')?.textContent);
+    const totalSalary       = parseFormattedNumber(document.getElementById('total_salary')?.textContent);
+    const totalGovtDeduct   = parseFormattedNumber(document.getElementById('total_govt')?.textContent);
     const daysWorked        = dtrRecords.filter(r => !r.is_absent).length;
+
+    // Calculate absent deduction = absent days × per-day rate
+    const perDayForAbsent = parseFormattedNumber(document.getElementById('daily_rate')?.value) || 0;
+    const totalAbsentDeduct = totalAbsentDays * perDayForAbsent;
+
+    // Get training payment (shows separately on payslip)
+    const traineePayment = parseFormattedNumber(document.getElementById('training_amount_main')?.value) ||
+                           parseFloat(document.getElementById('imported_training_amount')?.value) || 0;
+    const trainingsCount = dtrRecords.filter(r => r.is_training).length;
+    // gross_pay for DB = total salary WITHOUT training (training is saved separately in trainings_cost)
+    // Add halfday back because halfday should NOT be deducted from gross, only from net
+    const grossPayForDB = totalSalary + totalHalfDeduct - traineePayment;
 
     // Show loading state
     const saveBtn = document.getElementById('btn_save_main_dtr');
@@ -6313,13 +9157,30 @@ function saveMainDTRToDatabase() {
     formData.append('employee_id',      employeeId);
     formData.append('employee_name',    employeeName);
     formData.append('salary',           salary);
+    
+    // Send the ACTUAL per_day rate from the input field (not recalculated)
+    // Rates must be manually entered - NO automatic calculation
+    const perDayInput = document.getElementById('daily_rate');
+    const perDayRate = perDayInput ? parseFormattedNumber(perDayInput.value) : 0;
+    formData.append('per_day_rate', perDayRate);
+    
+    // Also send per_hour_rate, per_minute_rate, and ot_rate
+    // Read from hidden input fields (not SPANs) to get actual numeric values
+    const hourlyRateValue = document.getElementById('hourly_rate_value')?.value || (perDayRate / 8);
+    const minuteRateValue = document.getElementById('minute_rate_value')?.value || (hourlyRateValue / 60);
+    const otRateValue = document.getElementById('ot_rate')?.value || (hourlyRateValue * 1.25);
+    
+    formData.append('per_hour_rate', parseFloat(hourlyRateValue));
+    formData.append('per_minute_rate', parseFloat(minuteRateValue));
+    formData.append('ot_rate', parseFloat(otRateValue));
+    
     formData.append('period_start',     periodStart);
     formData.append('period_end',       periodEnd);
     formData.append('days_office',      daysWorked);
-    formData.append('gross_pay',        totalSalary);
-    formData.append('trainings_count',  0);
-    formData.append('payment_per_trainee', 0);
-    formData.append('trainings_cost',   0);
+    formData.append('gross_pay',        grossPayForDB);
+    formData.append('trainings_count',  trainingsCount);
+    formData.append('trainings_cost',   traineePayment);
+    formData.append('payment_per_trainee', trainingsCount > 0 ? (traineePayment / trainingsCount) : 0);
     // Totals for payroll_computations
     formData.append('total_late_hours',     totalLateHours);
     formData.append('total_undertime_hours',totalUndertime);
@@ -6333,7 +9194,12 @@ function saveMainDTRToDatabase() {
     formData.append('sss_contribution',      sssContribution);
     formData.append('philhealth_contribution', philhealthContrib);
     formData.append('pagibig_contribution',  pagibigContrib);
+    formData.append('total_govt_deductions', totalGovtDeduct);
+    formData.append('late_threshold', document.getElementById('late_threshold')?.value || '8:00');
+    formData.append('end_threshold', document.getElementById('end_threshold')?.value || '17:00');
+    formData.append('classification', (activeTabId && employeeTabs[activeTabId]) ? (employeeTabs[activeTabId].classification || '') : (currentEmployeeClassification || ''));
     formData.append('dtr_records',  JSON.stringify(dtrRecords));
+    formData.append('csrf_token', document.querySelector('meta[name="csrf-token"]')?.getAttribute('content') || '');
 
     fetch('save_dtr.php', {
         method: 'POST',
@@ -6342,27 +9208,78 @@ function saveMainDTRToDatabase() {
     .then(r => r.json())
     .then(data => {
         if (data.success) {
-            // Success toast-style notification then redirect
-            const bar = document.getElementById('dtr_save_bar');
-            if (bar) {
-                bar.innerHTML = `<div style="width:100%;text-align:center;color:#68d391;font-size:15px;font-weight:600;">
-                    <i class="fas fa-check-circle"></i>
-                    Saved successfully! (${data.records_count} records for <strong>${data.employee_name}</strong>)
-                    &nbsp;&nbsp;<span style="color:#a0aec0;font-weight:400;">Redirecting to Payroll List&hellip;</span>
-                </div>`;
+            // Mark tab as saved if using multi-tab system
+            if (activeTabId && employeeTabs[activeTabId]) {
+                employeeTabs[activeTabId].saved = true;
+                renderEmployeeTabs();
+                saveTabsToLocalStorage();
             }
-            setTimeout(() => { window.location.href = 'payroll_list.php'; }, 1800);
+
+            // Check if there are unsaved tabs remaining
+            const unsavedTabs = Object.values(employeeTabs).filter(t => !t.saved);
+            
+            if (unsavedTabs.length > 0) {
+                // More tabs to save - don't redirect, show success and switch to next
+                const bar = document.getElementById('dtr_save_bar');
+                if (bar) {
+                    bar.innerHTML = `<div style="width:100%;text-align:center;color:#68d391;font-size:15px;font-weight:600;">
+                        <i class="fas fa-check-circle"></i>
+                        Saved ${data.employee_name}! (${data.records_count} records)
+                        &nbsp;&nbsp;<span style="color:#a0aec0;font-weight:400;">${unsavedTabs.length} more employee(s) remaining&hellip;</span>
+                    </div>`;
+                }
+                // Switch to next unsaved tab after a short delay
+                setTimeout(() => {
+                    // Restore the save bar
+                    if (bar) {
+                        bar.innerHTML = `
+                            <div class="dtr-save-bar-left">
+                                <span class="save-info-text"><i class="fas fa-info-circle"></i> Review all DTR entries above, then save to link this payroll record to the selected employee.</span>
+                            </div>
+                            <div class="dtr-save-bar-right">
+                                <button type="button" class="btn-recalculate" onclick="recalculateAllDTR()" title="Recalculate all rows" style="padding: 8px 16px; background: #17a2b8; color: white; border: none; border-radius: 6px; cursor: pointer; font-size: 13px; margin-right: 8px;">
+                                    <i class="fas fa-calculator"></i> Recalculate All
+                                </button>
+                                <button type="button" id="btn_save_main_dtr" class="btn-save-payroll" onclick="saveMainDTRToDatabase()">
+                                    <i class="fas fa-save"></i> Save to Payroll List
+                                </button>
+                                <button type="button" id="btn_save_all_dtr" class="btn-save-payroll btn-save-all" onclick="saveAllDTRToDatabase()" style="margin-left: 8px; background: linear-gradient(135deg, #38a169, #2f855a);">
+                                    <i class="fas fa-save"></i> Save All (<span id="save_all_count">${unsavedTabs.length}</span>) to Payroll
+                                </button>
+                            </div>`;
+                    }
+                    // Switch to first unsaved tab
+                    const nextTab = unsavedTabs[0];
+                    switchEmployeeTab(nextTab.tabId);
+                }, 1500);
+            } else {
+                // All done - clear localStorage and redirect to payroll list
+                clearTabsFromLocalStorage();
+                const bar = document.getElementById('dtr_save_bar');
+                if (bar) {
+                    bar.innerHTML = `<div style="width:100%;text-align:center;color:#68d391;font-size:15px;font-weight:600;">
+                        <i class="fas fa-check-circle"></i>
+                        Saved successfully! (${data.records_count} records for <strong>${data.employee_name}</strong>)
+                        &nbsp;&nbsp;<span style="color:#a0aec0;font-weight:400;">Redirecting to Payroll List&hellip;</span>
+                    </div>`;
+                }
+                setTimeout(() => { window.location.href = 'payroll_list.php'; }, 1800);
+            }
         } else {
             alert('Error saving: ' + (data.message || 'Unknown error'));
-            saveBtn.innerHTML = originalHTML;
-            saveBtn.disabled = false;
         }
     })
     .catch(err => {
         console.error('Save error:', err);
         alert('Error saving: ' + err.message);
-        saveBtn.innerHTML = originalHTML;
-        saveBtn.disabled = false;
+    })
+    .finally(() => {
+        // Always re-enable the button (works even if bar.innerHTML was replaced)
+        const freshBtn = document.getElementById('btn_save_main_dtr');
+        if (freshBtn) {
+            freshBtn.innerHTML = originalHTML;
+            freshBtn.disabled = false;
+        }
     });
 }
 
@@ -6733,7 +9650,10 @@ function startManualEntry() {
     if (empNameDisplay) empNameDisplay.textContent = empInfo.full_name;
     if (empPositionDisplay) empPositionDisplay.textContent = empInfo.position;
     if (empDeptDisplay) empDeptDisplay.textContent = empInfo.department;
-    if (basicSalaryField) basicSalaryField.value = empInfo.basic_monthly_salary;
+    if (basicSalaryField) {
+        const salaryNum = parseFloat(empInfo.basic_monthly_salary) || 0;
+        basicSalaryField.value = salaryNum.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
     
     // Update TB5 header display
     updateTB5Header(empInfo.full_name, empInfo.basic_monthly_salary, selectedPeriod);
@@ -6750,8 +9670,41 @@ function startManualEntry() {
 
 // Generate DTR rows for the selected period
 function generateDTRRowsForPeriod(periodOption) {
-    const startDate = new Date(periodOption.dataset.start);
-    const endDate = new Date(periodOption.dataset.end);
+    // Parse dates as local dates to avoid timezone issues
+    const startDateStr = periodOption.dataset.start;
+    const endDateStr = periodOption.dataset.end;
+    
+    const [startYear, startMonth, startDay] = startDateStr.split('-').map(Number);
+    const [endYear, endMonth, endDay] = endDateStr.split('-').map(Number);
+    
+    const startDate = new Date(startYear, startMonth - 1, startDay);
+    const endDate = new Date(endYear, endMonth - 1, endDay);
+    
+    // DON'T reset basic salary - it should carry forward from previous periods
+    const basicSalaryField = document.getElementById('basic_monthly_salary');
+    if (basicSalaryField) {
+        // When switching periods, preserve the current displayed value as the new baseline
+        const currentValue = parseFormattedNumber(basicSalaryField.value);
+        
+        // Set originalMonthlyValue to current displayed value (this becomes the base for the new period)
+        // This ensures second cutoff starts with first cutoff's accumulated value
+        if (currentValue > 0) {
+            basicSalaryField.dataset.originalMonthlyValue = currentValue.toFixed(2);
+            console.log(`Period switch: Setting baseline to ₱${currentValue.toLocaleString('en-US', {minimumFractionDigits: 2})}`);
+        }
+        
+        // Ensure originalBaseSalary is set (for per day rate calculations - always the employee's base salary)
+        if (!basicSalaryField.dataset.originalBaseSalary) {
+            // Only set if it doesn't exist - this should be the original employee salary (e.g., 13000)
+            const originalBase = parseFloat(basicSalaryField.dataset.originalBaseSalary) || 0;
+            if (originalBase === 0) {
+                // First time setup - current value might already include Sunday work, so we need to be careful
+                // For now, assume if we're setting this for first time, use the displayed value
+                // This will be overridden when employee is selected
+                basicSalaryField.dataset.originalBaseSalary = currentValue.toFixed(2);
+            }
+        }
+    }
     
     const dtrRows = document.getElementById('dtr_rows');
     if (!dtrRows) return;
@@ -6762,7 +9715,10 @@ function generateDTRRowsForPeriod(periodOption) {
     let currentDate = new Date(startDate);
     
     while (currentDate <= endDate) {
-        const dateStr = currentDate.toISOString().split('T')[0];
+        const year = currentDate.getFullYear();
+        const month = String(currentDate.getMonth() + 1).padStart(2, '0');
+        const day = String(currentDate.getDate()).padStart(2, '0');
+        const dateStr = `${year}-${month}-${day}`;
         const row = createDTRRowFromData(rowNum, { dtr_date: dateStr });
         dtrRows.appendChild(row);
         rowNum++;
@@ -6771,6 +9727,12 @@ function generateDTRRowsForPeriod(periodOption) {
     
     updateRowCount();
     attachDTRListeners();
+    
+    // Recalculate rates to ensure per day is correct
+    updateAllRates();
+    
+    // Call calculateTotals to ensure basic salary display is correct after period switch
+    calculateTotals();
 }
 
 // Handle file selection
@@ -6834,6 +9796,96 @@ function hideImportStatus() {
     if (statusEl) statusEl.style.display = 'none';
 }
 
+// Import multiple DTR Excel files - creates a tab for each
+async function importDTRFromExcelMulti(fileArray) {
+    if (!fileArray || fileArray.length === 0) {
+        showImportStatus('error', 'No files selected.');
+        return;
+    }
+
+    let successCount = 0;
+    let failCount = 0;
+    const errors = [];
+
+    for (let i = 0; i < fileArray.length; i++) {
+        const file = fileArray[i];
+        showImportStatus('loading', `Importing file ${i + 1} of ${fileArray.length}: ${file.name}...`);
+
+        try {
+            const data = await importSingleExcelFile(file);
+            if (data.success) {
+                if (data.multi_sheet && data.sheets && data.sheets.length > 0) {
+                    // Multi-sheet response: create a tab for each valid sheet
+                    for (const sheet of data.sheets) {
+                        showImportedDataSection(sheet);
+                        createEmployeeTab(sheet);
+                        successCount++;
+                    }
+                } else {
+                    // Single-sheet response
+                    showImportedDataSection(data);
+                    createEmployeeTab(data);
+                    successCount++;
+                    // Legacy: handle additional_sheets if present
+                    if (data.additional_sheets && data.additional_sheets.length > 0) {
+                        for (const sheet of data.additional_sheets) {
+                            createEmployeeTab(sheet);
+                            showImportedDataSection(sheet);
+                            successCount++;
+                        }
+                    }
+                }
+            } else {
+                failCount++;
+                errors.push(`${file.name}: ${data.message || 'Unknown error'}`);
+            }
+        } catch (err) {
+            failCount++;
+            errors.push(`${file.name}: ${err.message}`);
+        }
+    }
+
+    // Reset file input so user can re-select
+    const fileInput = document.getElementById('dtr_excel_file');
+    if (fileInput) fileInput.value = '';
+
+    // Show final status
+    if (failCount === 0) {
+        showImportStatus('success', `Successfully imported ${successCount} employee(s). Switch tabs to review each DTR.`);
+    } else {
+        showImportStatusHTML('error', `Imported ${successCount} of ${fileArray.length}. Failed ${failCount}:<br>${errors.join('<br>')}`);
+    }
+}
+
+// Import a single Excel file via fetch (returns promise with parsed data)
+function importSingleExcelFile(file) {
+    return new Promise((resolve, reject) => {
+        const formData = new FormData();
+        formData.append('excel_file', file);
+
+        fetch('import_dtr.php', {
+            method: 'POST',
+            body: formData
+        })
+        .then(response => {
+            return response.text().then(text => {
+                if (!response.ok) {
+                    throw new Error(`HTTP ${response.status}: ${text.substring(0, 200)}`);
+                }
+                try {
+                    return JSON.parse(text);
+                } catch (e) {
+                    const match = text.match(/<b>(.+?)<\/b>/);
+                    const errorHint = match ? match[1] : 'Invalid response';
+                    throw new Error(errorHint);
+                }
+            });
+        })
+        .then(data => resolve(data))
+        .catch(err => reject(err));
+    });
+}
+
 // Import DTR from Excel - Primary method (extracts employee info from file)
 function importDTRFromExcel() {
     if (!selectedFile) {
@@ -6859,18 +9911,11 @@ function importDTRFromExcel() {
     .then(response => {
         // Get response text first to handle HTML error pages
         return response.text().then(text => {
-            console.log('=== RAW SERVER RESPONSE ===');
-            console.log('Status:', response.status);
-            console.log('Content-Type:', response.headers.get('Content-Type'));
-            console.log('First 500 chars:', text.substring(0, 500));
-            console.log('Last 200 chars:', text.substring(Math.max(0, text.length - 200)));
-            
             if (!response.ok) {
                 throw new Error(`HTTP ${response.status}: ${text.substring(0, 200)}`);
             }
             try {
                 const json = JSON.parse(text);
-                console.log('Parsed JSON successfully:', json);
                 return json;
             } catch (e) {
                 // Response is not JSON - likely an HTML error page or PHP error
@@ -6887,27 +9932,16 @@ function importDTRFromExcel() {
     })
     .then(data => {
         if (data.success) {
-            console.log('Import successful, records:', data.records_count);
-            
-            // Debug: Show time values from imported data  
-            if (data.dtr_data && data.dtr_data.length > 0) {
-                const sample = data.dtr_data[0];
-                console.log('First record time values:', {
-                    date: sample.dtr_date,
-                    am_in: sample.am_time_in,
-                    am_out: sample.am_time_out,
-                    pm_in: sample.pm_time_in,
-                    pm_out: sample.pm_time_out
-                });
+            // Debug: log salary extraction details
+            if (data.debug_salary) {
+                console.log('=== SALARY DEBUG ===', data.debug_salary);
             }
-            if (data.debug_time_values) {
-                console.log('Server time debug:', data.debug_time_values);
-            }
-            
-            // Show preview mode message - data NOT saved yet
+            console.log('employee_info:', data.employee_info);
+                        // Show preview mode message - data NOT saved yet
             const empInfo = data.employee_info || {};
             const isExisting = empInfo.is_existing || false;
             const empName = empInfo.full_name || 'Unknown';
+
             
             let statusMsg = `Extracted ${data.records_count} DTR records for "${empName}". `;
             if (isExisting) {
@@ -6919,50 +9953,27 @@ function importDTRFromExcel() {
             
             showImportStatus('success', statusMsg);
             
-            // Set schedule thresholds from Excel (late start, end time) BEFORE calculations
-            if (data.schedule_thresholds) {
-                const lateThInput = document.getElementById('late_threshold');
-                const endThInput = document.getElementById('end_threshold');
-                if (data.schedule_thresholds.late_threshold && lateThInput) {
-                    lateThInput.value = data.schedule_thresholds.late_threshold;
-                    console.log('Set late threshold from Excel:', data.schedule_thresholds.late_threshold);
-                }
-                if (data.schedule_thresholds.end_time && endThInput) {
-                    endThInput.value = data.schedule_thresholds.end_time;
-                    console.log('Set end time from Excel:', data.schedule_thresholds.end_time);
-                }
-            }
-            
             // Show the imported data section (employee info review)
-            showImportedDataSection(data);
-            
-            // Populate the MAIN DTR Calculator table with imported data
-            populateMainDTRFromImport(data);
-            
-            // Populate trainee payment from imported trainee summary
-            const traineeSummary = data.trainee_summary || {};
-            const importedCount = traineeSummary.total_count || 0;
-            const importedPayPerUnit = traineeSummary.pay_per_unit || 0;
-            const importedTotal = traineeSummary.total_cost || 0;
-            
-            if (importedTotal > 0 || importedCount > 0) {
-                // Set imported section fields
-                const impCountEl = document.getElementById('imported_trainings_count');
-                const impPayEl = document.getElementById('imported_payment_per_trainee');
-                const impCostEl = document.getElementById('imported_trainings_cost');
-                if (impCountEl) impCountEl.value = importedCount;
-                if (impPayEl) impPayEl.value = importedPayPerUnit.toFixed(2);
-                if (impCostEl) impCostEl.value = importedTotal.toFixed(2);
-                
-                // Sync to main trainee form
-                const mainCountEl = document.getElementById('trainee_count_main');
-                const mainPayEl = document.getElementById('trainee_payment_per_main');
-                const mainTotalEl = document.getElementById('trainee_total_main');
-                if (mainCountEl) mainCountEl.value = importedCount;
-                if (mainPayEl) mainPayEl.value = importedPayPerUnit.toFixed(2);
-                if (mainTotalEl) mainTotalEl.value = importedTotal.toFixed(2);
-                
-                console.log('Trainee data populated from import:', importedCount, 'trainees @', importedPayPerUnit, '= total', importedTotal);
+            if (data.multi_sheet && data.sheets && data.sheets.length > 0) {
+                // Multi-sheet response: create a tab for each valid sheet
+                for (const sheet of data.sheets) {
+                    createEmployeeTab(sheet);
+                    showImportedDataSection(sheet);
+                }
+                statusMsg = `Extracted DTR data from ${data.sheets.length} sheet(s). Click "Save to Payroll List" to save each.`;
+                showImportStatus('success', statusMsg);
+            } else {
+                showImportedDataSection(data);
+                createEmployeeTab(data);
+                // Legacy: handle additional_sheets if present
+                if (data.additional_sheets && data.additional_sheets.length > 0) {
+                    for (const sheet of data.additional_sheets) {
+                        createEmployeeTab(sheet);
+                        showImportedDataSection(sheet);
+                    }
+                    statusMsg = `Extracted DTR data from ${1 + data.additional_sheets.length} sheets. Click "Save to Payroll List" to save each.`;
+                    showImportStatus('success', statusMsg);
+                }
             }
             
             // Scroll to the DTR Calculator
@@ -7016,8 +10027,9 @@ function showImportedDataSection(data) {
         console.error('imported_data_section element not found');
         return;
     }
-    section.style.display = 'block';
-    
+    // Section remains hidden - data populated in background for JavaScript access
+    // section.style.display = 'block';
+     
     const empInfo = data.employee_info || {};
     const periodInfo = data.period_info || {};
     
@@ -7029,13 +10041,40 @@ function showImportedDataSection(data) {
     
     // Populate editable fields
     setInput('imported_employee_name', empInfo.full_name || '');
-    setInput('imported_salary', empInfo.basic_monthly_salary || '13000');
+    setInput('imported_salary', empInfo.basic_monthly_salary || '');
     setInput('imported_period_start', periodInfo.start_date || '');
     setInput('imported_period_end', periodInfo.end_date || '');
     setInput('imported_records_count', data.records_count || '0');
     
+    // Handle trainee classification from import
+    const classification = empInfo.classification || empInfo.employee_classification || '';
+    currentEmployeeClassification = classification;
+    console.log('showImportedDataSection: classification =', JSON.stringify(classification), 'is_trainer =', JSON.stringify(empInfo.is_trainer), 'is_fixrate =', JSON.stringify(empInfo.is_fixrate));
+
+    // Normalize classification (handle both "fixedrate" and "fixed rate").
+    // HOWEVER: prefer explicit flags from the Excel cells (is_trainer / is_fixrate) when present.
+    let normalizedClass = '';
+    const trainerFlag = String(empInfo.is_trainer || '').trim().toLowerCase();
+    const fixrateFlag = String(empInfo.is_fixrate || '').trim().toLowerCase();
+
+    if (trainerFlag && trainerFlag !== '' && trainerFlag !== '0' && trainerFlag !== 'no' && trainerFlag !== 'false') {
+        normalizedClass = 'trainer';
+    } else if (fixrateFlag && fixrateFlag !== '' && fixrateFlag !== '0' && fixrateFlag !== 'no' && fixrateFlag !== 'false') {
+        normalizedClass = 'fixedrate';
+    } else {
+        // Fall back to classification text when explicit flags are not provided
+        normalizedClass = (classification || '').toLowerCase().replace(/\s+/g, '');
+    }
+    if (normalizedClass === 'trainer') {
+        configureForTrainer();
+    } else if (normalizedClass === 'fixedrate') {
+        configureForFixedRate();
+    } else {
+        configureForRegular();
+    }
+    
     // Update rate displays
-    const salary = parseFloat(empInfo.basic_monthly_salary) || 13000;
+    const salary = parseFloat(empInfo.basic_monthly_salary) || 0;
     updateTB5Rates(salary);
 }
 
@@ -7044,15 +10083,6 @@ function populateMainDTRFromImport(data) {
     const dtrData = data.dtr_data || [];
     const empInfo = data.employee_info || {};
     const periodInfo = data.period_info || {};
-    
-    console.log('populateMainDTRFromImport called with', dtrData.length, 'records');
-    if (dtrData.length > 0) {
-        console.log('Sample record:', JSON.stringify(dtrData[0]));
-        // Detailed time debug
-        dtrData.slice(0, 3).forEach((rec, i) => {
-            console.log(`Record ${i}: date=${rec.dtr_date} am_in=${rec.am_time_in} pm_out=${rec.pm_time_out} work_hrs=${rec.total_work_hours}`);
-        });
-    }
     
     // Helper function to set time values after element is appended to DOM
     function setTimeAfterAppend(rowNum, field, value) {
@@ -7064,11 +10094,6 @@ function populateMainDTRFromImport(data) {
         const input = document.querySelector(`input[name="${field}_${rowNum}"]`);
         if (input) {
             input.value = normalized;
-            if (rowNum <= 3) {
-                console.log(`Set ${field}_${rowNum} = "${normalized}" (from "${value}")`);
-            }
-        } else {
-            console.warn(`Input not found: ${field}_${rowNum}`);
         }
     }
     
@@ -7083,7 +10108,55 @@ function populateMainDTRFromImport(data) {
     // Set basic salary (DON'T call updateAllRates yet - wait until rows exist)
     const basicSalaryField = document.getElementById('basic_monthly_salary');
     if (basicSalaryField && empInfo.basic_monthly_salary) {
-        basicSalaryField.value = empInfo.basic_monthly_salary;
+        const salaryNum = parseFloat(empInfo.basic_monthly_salary) || 0;
+        basicSalaryField.value = salaryNum.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        // Store the ORIGINAL base salary for per day rate calculations
+        basicSalaryField.dataset.originalBaseSalary = salaryNum.toFixed(2);
+        // CRITICAL: Clear stale originalMonthlyValue from any previous import/period
+        // so calculateTotals() reads the NEW imported value, not the old one
+        delete basicSalaryField.dataset.originalMonthlyValue;
+        basicSalaryField.title = '';
+        console.log('populateMainDTRFromImport: Set basic_monthly_salary to', salaryNum, '- cleared stale originalMonthlyValue');
+    }
+    
+    // Set per day rate from imported data
+    const dailyRateField = document.getElementById('daily_rate');
+    if (dailyRateField) {
+        let perDayVal = parseFloat(empInfo.per_day_rate) || 0;
+        // If per day rate not in Excel but basic salary exists, compute it
+        if (perDayVal === 0 && empInfo.basic_monthly_salary) {
+            perDayVal = parseFloat(empInfo.basic_monthly_salary) / 26;
+        }
+        if (perDayVal > 0) {
+            dailyRateField.value = perDayVal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+        }
+    }
+
+    // Set OT rate input from imported data if provided; otherwise derive from per-day rate
+    const otField = document.getElementById('ot_rate');
+    if (otField) {
+        let otVal = parseFloat(empInfo.ot_rate) || 0;
+        if (!otVal) {
+            // Prefer the displayed daily_rate input if available
+            const dailyElClient = document.getElementById('daily_rate');
+            let perDayClient = 0;
+            if (dailyElClient) {
+                if (typeof parseFormattedNumber === 'function') {
+                    perDayClient = parseFormattedNumber(dailyElClient.value) || 0;
+                } else {
+                    perDayClient = parseFloat((dailyElClient.value || '').toString().replace(/,/g, '')) || 0;
+                }
+            }
+            if (!perDayClient && empInfo.per_day_rate) {
+                perDayClient = parseFloat(empInfo.per_day_rate) || 0;
+            }
+            if (perDayClient > 0) {
+                otVal = perDayClient / 8.0 * 1.25;
+            }
+        }
+        if (otVal > 0) {
+            otField.value = Number(otVal).toFixed(2);
+        }
     }
     
     // Map imported data by INDEX (sequential order) rather than day number
@@ -7173,6 +10246,30 @@ function populateMainDTRFromImport(data) {
     
     // NOW compute rates (after rows exist) - this sets window.dtrRates
     updateAllRates();
+    // Debug: log trainee summary remarks if present
+    try {
+        const ts = data.trainee_summary || {};
+        if (ts && (ts.training_remarks || ts.total_cost)) {
+            console.log('populateMainDTRFromImport: trainee_summary:', ts);
+        }
+        // Populate training remarks/amount from trainee_summary to the form
+        if (ts.training_remarks && ts.training_remarks.toString().trim() !== '') {
+            const impRemarksEl = document.getElementById('imported_training_remarks');
+            const mainRemarksEl = document.getElementById('training_remarks_main');
+            if (impRemarksEl) impRemarksEl.value = ts.training_remarks;
+            if (mainRemarksEl) mainRemarksEl.value = ts.training_remarks;
+        }
+        if (ts.total_cost && parseFloat(ts.total_cost) > 0) {
+            const impAmountEl = document.getElementById('imported_training_amount');
+            const mainAmountEl = document.getElementById('training_amount_main');
+            try {
+                const amt = parseFloat(ts.total_cost) || 0;
+                if (impAmountEl) impAmountEl.value = amt.toFixed(2);
+                if (mainAmountEl) mainAmountEl.value = amt.toFixed(2);
+            } catch(e) {}
+        }
+        
+    } catch(e) { console.warn('Error applying trainee_summary to form', e); }
     
     // Recalculate all rows using requestAnimationFrame to ensure DOM is rendered
     requestAnimationFrame(function() {
@@ -7565,7 +10662,10 @@ function setEmployeeFromImport(employeeInfo, periodInfo) {
     if (empNameDisplay) empNameDisplay.textContent = employeeInfo.full_name || '';
     if (empPositionDisplay) empPositionDisplay.textContent = employeeInfo.position || '';
     if (empDeptDisplay) empDeptDisplay.textContent = employeeInfo.department || '';
-    if (basicSalaryField) basicSalaryField.value = employeeInfo.basic_monthly_salary || 0;
+    if (basicSalaryField) {
+        const salaryNum = parseFloat(employeeInfo.basic_monthly_salary) || 0;
+        basicSalaryField.value = salaryNum.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
 }
 
 // Populate DTR table from data
@@ -7614,13 +10714,29 @@ function createDTRRowFromData(rowNum, data) {
         const d = parseInt(parts[2]);
         const months = ['January', 'February', 'March', 'April', 'May', 'June',
                        'July', 'August', 'September', 'October', 'November', 'December'];
+        const daysOfWeek = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday'];
         const monthName = months[m - 1] || '';
-        dateDisplay = `<div class="date-day">${d}</div><div class="date-month">${monthName}</div>`;
+        // Create date object to get day of week
+        const dateObj = new Date(y, m - 1, d);
+        const dayOfWeek = daysOfWeek[dateObj.getDay()];
+        dateDisplay = `<div class="date-day">${d}</div><div class="date-month">${monthName}</div><div class="date-weekday">${dayOfWeek}</div>`;
     }
     
     const isAbsent = data.is_absent ? true : false;
+    const isTraining = data.is_training ? true : false;
+    const isDayOverride = data.day_override_enabled ? true : false;
     const disabledAttr = isAbsent ? 'disabled' : '';
     const disabledStyle = isAbsent ? 'style="background: #f0f0f0; cursor: not-allowed;"' : '';
+    const importedDayOverrideValues = {
+        basicSalary: data.day_override_basic_salary || '',
+        dailyRate: data.day_override_daily_rate || '',
+        lateThreshold: data.day_override_late_threshold || '',
+        endThreshold: data.day_override_end_threshold || ''
+    };
+
+    if (isDayOverride) {
+        window.dayOverrideValues[rowNum] = importedDayOverrideValues;
+    }
     
     // Normalize time values from Excel format to HH:MM
     const amIn = normalizeTimeValue(data.am_time_in);
@@ -7654,20 +10770,23 @@ function createDTRRowFromData(rowNum, data) {
     
     // Create HTML without time values (will be set programmatically)
     row.innerHTML = `
+        <td class="centered day-override-cell">
+            <input type="checkbox" name="day_override_enabled_${rowNum}" data-row="${rowNum}" class="dtr-day-override-toggle" ${isDayOverride ? 'checked' : ''} title="Enable per-day rate/time override">
+        </td>
         <td class="date-cell">
             <input type="hidden" name="dtr_date_${rowNum}" data-row="${rowNum}" value="${dateStr || ''}">
-            ${dateStr ? `<div class="date-display">${dateDisplay}</div>` : '<div class="date-display"><div class="date-day">-</div><div class="date-month">-</div></div>'}
+            ${dateStr ? `<div class="date-display">${dateDisplay}</div>` : '<div class="date-display"><div class="date-day">-</div><div class="date-month">-</div><div class="date-weekday">-</div></div>'}
         </td>
         <td><input type="text" name="am_in_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="8:00" maxlength="5" oninput="formatTime24(this)" ${disabledAttr} ${disabledStyle}></td>
         <td><input type="text" name="pm_out_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="17:00" maxlength="5" oninput="formatTime24(this)" ${disabledAttr} ${disabledStyle}></td>
         <td class="centered"><input type="checkbox" name="absent_${rowNum}" data-row="${rowNum}" class="dtr-absent" ${isAbsent ? 'checked' : ''}></td>
+        <td class="centered"><input type="checkbox" name="training_${rowNum}" data-row="${rowNum}" class="dtr-training" ${isTraining ? 'checked' : ''}></td>
         <td><input type="text" name="ot_out_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="18:00" maxlength="5" oninput="formatTime24(this)" ${disabledAttr} ${disabledStyle}></td>
         <td><input type="number" name="work_hours_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="${serverWorkHours.toFixed(2)}" step="1" title="Total work hours"></td>
         <td><input type="number" name="late_mins_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="${Math.round(serverLateMins)}" step="0.01" title="Late minutes"></td>
         <td><input type="number" name="undertime_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="${serverUndertime.toFixed(2)}" step="0.01" title="Undertime hours"></td>
         <td><input type="number" name="ot_hours_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="${serverOT.toFixed(2)}" step="0.01" title="OT hours"></td>
         <td><input type="number" name="absent_day_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="${isAbsent ? '1' : '0'}" step="0.5" title="Absent days"></td>
-        <td><input type="number" name="absent_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Absent deduction"></td>
         <td><input type="number" name="late_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Late deduction"></td>
         <td><input type="number" name="undertime_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Undertime deduction"></td>
         <td><input type="number" name="halfday_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Halfday deduction (auto-calculated when work hours < 4)"></td>
@@ -7677,9 +10796,7 @@ function createDTRRowFromData(rowNum, data) {
         <td><input type="number" name="undertime_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Undertime calculation"></td>
         <td><input type="number" name="ot_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="OT calculation"></td>
         <td><input type="number" name="govt_${rowNum}" data-row="${rowNum}" class="dtr-manual" value="${_govtVal}" step="0.01" title="Manual Gov't deduction"></td>
-        <td><input type="number" name="auto_salary_${rowNum}" data-row="${rowNum}" class="dtr-auto-salary" readonly value="" step="0.01" title="Net Salary"></td>
-        <td><input type="text" name="f1_${rowNum}" data-row="${rowNum}" class="dtr-f-input" maxlength="10" title="F1 marker"></td>
-        <td><input type="text" name="f2_${rowNum}" data-row="${rowNum}" class="dtr-f-input" maxlength="10" title="F2 marker"></td>
+        <td><input type="text" name="auto_salary_${rowNum}" data-row="${rowNum}" class="dtr-auto-salary" readonly value="" title="Net Salary"></td>
         <td><input type="text" name="remarks_${rowNum}" data-row="${rowNum}" class="dtr-remarks-input" value="${_remarkVal}" placeholder="Remarks" title="Remarks"></td>
         <td class="actions-cell">
             <button type="button" class="btn-delete-row" onclick="deleteDTRRow(this)" title="Delete">
@@ -7751,6 +10868,27 @@ document.getElementById('employee_select').addEventListener('change', checkExist
 const payrollPeriodEl = document.getElementById('payroll_period');
 if (payrollPeriodEl) {
     payrollPeriodEl.addEventListener('change', function() {
+        // Reset basic salary to employee's base salary when changing period (clears Sunday work from previous period)
+        const employeeSelect = document.getElementById('employee_select');
+        const selectedEmployee = employeeSelect?.options[employeeSelect.selectedIndex];
+        const baseSalary = selectedEmployee?.getAttribute('data-salary');
+        const basicSalaryField = document.getElementById('basic_monthly_salary');
+        
+        if (basicSalaryField && baseSalary) {
+            // Clear any Sunday work additions from previous period
+            delete basicSalaryField.dataset.originalMonthlyValue;
+            basicSalaryField.title = ''; // Clear tooltip
+            
+            // Reset to employee's base salary
+            const salaryValue = parseFloat(baseSalary);
+            basicSalaryField.value = salaryValue.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+            
+            console.log(`Period changed: Reset basic salary to ₱${salaryValue.toLocaleString()} (employee base salary from database)`);
+            
+            // Trigger rate recalculation
+            updateAllRates();
+        }
+        
         // Date picker - check existing DTR if needed
         const employeeId = document.getElementById('employee_select').value;
         const selectedDate = this.value;
@@ -7764,6 +10902,169 @@ if (payrollPeriodEl) {
 // Download DTR template
 function downloadDTRTemplate() {
     window.location.href = 'download_dtr_template.php';
+}
+
+// ================================
+// EXPORT DTR CALCULATOR TO EXCEL
+// ================================
+function exportDTRToExcel() {
+    // Validate that there are DTR rows with data
+    const dtrRows = document.querySelectorAll('#dtr_rows tr[data-row]');
+    if (dtrRows.length === 0) {
+        alert('No DTR data to export. Please add DTR entries first.');
+        return;
+    }
+
+    // Collect employee info
+    const employeeName = document.getElementById('tb5_employee_name')?.textContent ||
+                         document.getElementById('imported_employee_name')?.value || 'Employee';
+    
+    // Get basic salary - use the original monthly value if stored, else parse the field
+    const basicSalaryField = document.getElementById('basic_monthly_salary');
+    let basicSalary = 0;
+    if (basicSalaryField) {
+        if (basicSalaryField.dataset.originalMonthlyValue) {
+            basicSalary = parseFloat(basicSalaryField.dataset.originalMonthlyValue);
+        } else {
+            basicSalary = parseFormattedNumber(basicSalaryField.value) || 0;
+        }
+    }
+
+    const dailyRate = parseFormattedNumber(document.getElementById('daily_rate')?.value) || 500;
+    const hourlyRate = parseFloat(document.getElementById('hourly_rate')?.textContent || document.getElementById('hourly_rate_value')?.value) || 62.50;
+    const minuteRate = parseFloat(document.getElementById('minute_rate')?.textContent || document.getElementById('minute_rate_value')?.value) || 1.0417;
+    const otRate = parseFloat(document.getElementById('ot_rate')?.value) || 78.13;
+    const lateThreshold = document.getElementById('late_threshold')?.value || '8:00';
+    const endThreshold = document.getElementById('end_threshold')?.value || '17:00';
+
+    // Get period dates
+    const periodStart = document.getElementById('calculated_start_date')?.value ||
+                        document.getElementById('imported_period_start')?.value || '';
+    const periodEnd = document.getElementById('calculated_end_date')?.value ||
+                      document.getElementById('imported_period_end')?.value || '';
+
+    // Get training info
+    const trainingAmount = parseFormattedNumber(document.getElementById('training_amount_main')?.value) ||
+                           parseFloat(document.getElementById('imported_training_amount')?.value) || 0;
+    const trainingRemarks = document.getElementById('training_remarks_main')?.value ||
+                            document.getElementById('imported_training_remarks')?.value || '';
+
+    // Collect all DTR row data
+    const rows = [];
+    dtrRows.forEach(row => {
+        const rowNum = row.getAttribute('data-row');
+        if (!rowNum) return;
+
+        const dateInput = document.querySelector(`input[name="dtr_date_${rowNum}"]`);
+        const amInInput = document.querySelector(`input[name="am_in_${rowNum}"]`);
+        const pmOutInput = document.querySelector(`input[name="pm_out_${rowNum}"]`);
+        const otOutInput = document.querySelector(`input[name="ot_out_${rowNum}"]`);
+        const absentInput = document.querySelector(`input[name="absent_${rowNum}"]`);
+        const trainingInput = document.querySelector(`input[name="training_${rowNum}"]`);
+        const govtInput = document.querySelector(`input[name="govt_${rowNum}"]`);
+        const remarksInput = document.querySelector(`input[name="remarks_${rowNum}"]`);
+
+        rows.push({
+            date: dateInput?.value || '',
+            amIn: amInInput?.value || '',
+            pmOut: pmOutInput?.value || '',
+            otOut: otOutInput?.value || '',
+            absent: absentInput?.checked || false,
+            training: trainingInput?.checked || false,
+            govt: parseFloat(govtInput?.value) || 0,
+            remarks: remarksInput?.value || '',
+            // Computed values from the form (match exactly what the manual DTR shows)
+            workHours: parseFloat(document.querySelector(`input[name="work_hours_${rowNum}"]`)?.value) || 0,
+            lateMins: parseFloat(document.querySelector(`input[name="late_mins_${rowNum}"]`)?.value) || 0,
+            undertime: parseFloat(document.querySelector(`input[name="undertime_${rowNum}"]`)?.value) || 0,
+            otHours: parseFloat(document.querySelector(`input[name="ot_hours_${rowNum}"]`)?.value) || 0,
+            absentDay: parseFloat(document.querySelector(`input[name="absent_day_${rowNum}"]`)?.value) || 0,
+            lateDeduct: parseFloat(document.querySelector(`input[name="late_deduct_${rowNum}"]`)?.value) || 0,
+            undertimeDeduct: parseFloat(document.querySelector(`input[name="undertime_deduct_${rowNum}"]`)?.value) || 0,
+            halfdayDeduct: parseFloat(document.querySelector(`input[name="halfday_deduct_${rowNum}"]`)?.value) || 0,
+            otPay: parseFloat(document.querySelector(`input[name="ot_pay_${rowNum}"]`)?.value) || 0,
+            netDeduct: parseFloat(document.querySelector(`input[name="net_deduct_${rowNum}"]`)?.value) || 0,
+            lateMinCalc: parseFloat(document.querySelector(`input[name="late_min_calc_${rowNum}"]`)?.value) || 0,
+            undertimeCalc: parseFloat(document.querySelector(`input[name="undertime_calc_${rowNum}"]`)?.value) || 0,
+            otCalc: parseFloat(document.querySelector(`input[name="ot_calc_${rowNum}"]`)?.value) || 0,
+            autoSalary: parseFormattedNumber(document.querySelector(`input[name="auto_salary_${rowNum}"]`)?.value) || 0
+        });
+    });
+
+    if (rows.length === 0) {
+        alert('No DTR rows found to export.');
+        return;
+    }
+
+    // Build payload
+    const payload = {
+        employeeName: employeeName,
+        basicSalary: basicSalary,
+        dailyRate: dailyRate,
+        hourlyRate: hourlyRate,
+        minuteRate: minuteRate,
+        otRate: otRate,
+        lateThreshold: lateThreshold,
+        endThreshold: endThreshold,
+        periodStart: periodStart,
+        periodEnd: periodEnd,
+        trainingAmount: trainingAmount,
+        trainingRemarks: trainingRemarks,
+        rows: rows
+    };
+
+    // Show loading state on button
+    const exportBtn = document.getElementById('btn_export_dtr_excel');
+    const originalHTML = exportBtn.innerHTML;
+    exportBtn.disabled = true;
+    exportBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Exporting...';
+
+    // Send data to server and download the file
+    fetch('export_dtr_calculator.php', {
+        method: 'POST',
+        headers: {
+            'Content-Type': 'application/json',
+        },
+        body: JSON.stringify(payload)
+    })
+    .then(response => {
+        if (!response.ok) {
+            return response.text().then(text => { throw new Error(text || 'Export failed'); });
+        }
+        return response.blob();
+    })
+    .then(blob => {
+        // Create download link
+        const url = window.URL.createObjectURL(blob);
+        const a = document.createElement('a');
+        a.href = url;
+        const empSafe = employeeName.replace(/[^A-Za-z0-9_\-]/g, '_');
+        // Use local date format to avoid timezone issues
+        const now = new Date();
+        const localDate = `${now.getFullYear()}-${String(now.getMonth() + 1).padStart(2, '0')}-${String(now.getDate()).padStart(2, '0')}`;
+        const pStart = periodStart || localDate;
+        const pEnd = periodEnd || localDate;
+        a.download = `DTR_${empSafe}_${pStart}_to_${pEnd}.xlsx`;
+        document.body.appendChild(a);
+        a.click();
+        window.URL.revokeObjectURL(url);
+        a.remove();
+
+        // Success feedback
+        exportBtn.innerHTML = '<i class="fas fa-check"></i> Exported!';
+        exportBtn.style.background = 'linear-gradient(135deg, #38a169, #2f855a)';
+        setTimeout(() => {
+            exportBtn.innerHTML = originalHTML;
+            exportBtn.style.background = '';
+            exportBtn.disabled = false;
+        }, 2000);
+    })
+    .catch(error => {
+        console.error('Export error:', error);
+        alert('Failed to export DTR: ' + error.message);
+        exportBtn.innerHTML = originalHTML;
+        exportBtn.disabled = false;
+    });
 }
 
 // Update TB5-style header with employee info and calculated rates
@@ -7780,6 +11081,8 @@ function updateTB5Header(employeeName, basicSalary, periodOption = null) {
     
     // Update TB5 header elements
     const nameEl = document.getElementById('tb5_employee_name');
+    if (nameEl) nameEl.textContent = employeeName || '-';
+    
     const basicEl = document.getElementById('tb5_basic');
     const perDayEl = document.getElementById('tb5_per_day');
     const perMinEl = document.getElementById('tb5_per_min');
@@ -7800,11 +11103,10 @@ function updateTB5Header(employeeName, basicSalary, periodOption = null) {
         periodEl.textContent = periodText;
     }
     
-    // Store rates globally for calculations (using working days excluding Sundays)
-    const importedPeriodStart = document.getElementById('imported_period_start')?.value;
-    const importedPeriodEnd = document.getElementById('imported_period_end')?.value;
-    const workingDaysForCalc = countWorkingDays(importedPeriodStart, importedPeriodEnd) || 15;
-    const recalcPerDay = salary / workingDaysForCalc;
+    // Store rates globally for calculations
+    // Per day rate is ALWAYS basic salary ÷ 26 (standard working days per month, excluding Sundays)
+    const WORKING_DAYS_IN_MONTH = 26;
+    const recalcPerDay = salary / WORKING_DAYS_IN_MONTH;
     const recalcPerHour = recalcPerDay / 8;
     const recalcPerMin = recalcPerHour / 60;
     
@@ -7816,39 +11118,52 @@ function updateTB5Header(employeeName, basicSalary, periodOption = null) {
     };
 }
 
+// Format Basic Salary field with commas on blur
+function formatBasicSalaryWithCommas(input) {
+    const value = parseFormattedNumber(input.value);
+    if (value > 0) {
+        input.value = value.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+
+    const activeRow = getActiveDayOverrideRow();
+    if (activeRow) {
+        syncHeaderFieldsToDayOverride(activeRow);
+        calculateRowDTR(activeRow);
+        calculateTotals();
+    } else {
+        captureGlobalRateFieldSnapshot();
+    }
+}
+
+// Format Per Day rate field with commas on blur
+function formatDailyRateWithCommas(input) {
+    const value = parseFormattedNumber(input.value);
+    if (value > 0) {
+        input.value = value.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
+    }
+}
+
 // Update all rates when basic salary changes
 function updateAllRates() {
-    const basicSalaryInput = document.getElementById('basic_monthly_salary');
-    const basicSalary = parseFloat(basicSalaryInput.value) || 13000;
-    
-    // Calculate working days excluding Sundays
-    const periodStart = document.getElementById('calculated_start_date')?.value;
-    const periodEnd = document.getElementById('calculated_end_date')?.value;
-    const workingDays = countWorkingDays(periodStart, periodEnd) || 15; // Fallback to 15 if no dates
-    
-    const hoursPerDay = 8;
-    const minsPerHour = 60;
-    const otMultiplier = 1.25;
-    
-    // Calculate daily rate from basic salary
-    const dailyRate = basicSalary / workingDays;
-    const otRate = (dailyRate / hoursPerDay) * otMultiplier;
-    
-    // Update daily rate and OT rate inputs
-    const dailyEl = document.getElementById('daily_rate');
-    const otEl = document.getElementById('ot_rate');
-    
-    if (dailyEl) dailyEl.value = dailyRate.toFixed(2);
-    if (otEl) otEl.value = otRate.toFixed(2);
-    
-    // Trigger calculation of hourly and minute rates from daily rate
+    // Skip if we're updating from calculation (to prevent loop)
+    if (window.isUpdatingFromCalculation === true) {
+        return;
+    }
+    // Basic Salary is a reference-only field and no longer drives rate calculations.
+    // Per Day (daily_rate) is entered independently by the user.
+    // Just propagate the current Per Day value to all downstream rate calculations.
     updateRatesFromDaily();
 }
 
 // Update rates when per/day changes (called when user inputs per/day)
 function updateRatesFromDaily() {
     const dailyEl = document.getElementById('daily_rate');
-    const dailyRate = parseFloat(dailyEl.value) || 500;
+    if (!dailyEl) {
+        console.error('daily_rate element not found');
+        return;
+    }
+    // Parse comma-formatted value
+    const dailyRate = parseFormattedNumber(dailyEl.value) || 500;
     
     const hoursPerDay = 8;
     const minsPerHour = 60;
@@ -7891,6 +11206,23 @@ function updateRatesFromDaily() {
     if (summaryMinEl) summaryMinEl.textContent = minuteRate.toFixed(4);
     if (summaryOtEl) summaryOtEl.textContent = otRate.toFixed(2);
     if (summaryHalfdayEl) summaryHalfdayEl.textContent = halfDayRate.toFixed(2);
+
+    if (window.checkedDaysEditMode) {
+        applyCheckedDaysHeaderValuesToRows();
+        return;
+    }
+
+    window.checkedDaysDefaultSnapshot = getCurrentCheckedDaysValues();
+
+    const activeRow = getActiveDayOverrideRow();
+    if (activeRow) {
+        syncHeaderFieldsToDayOverride(activeRow);
+        calculateRowDTR(activeRow);
+        calculateTotals();
+        return;
+    } else {
+        captureGlobalRateFieldSnapshot();
+    }
     
     // Update hidden inputs
     const hourlyInputEl = document.getElementById('hourly_rate_value');
@@ -7910,7 +11242,7 @@ function updateRatesFromDaily() {
     
     // Recalculate all rows with new rates
     document.querySelectorAll('#dtr_rows tr').forEach(row => {
-        const rowNum = row.getAttribute('data-row');
+        const rowNum = row.getAttribute('data-row');       
         if (rowNum) calculateRowDTR(rowNum);
     });
     
@@ -7921,6 +11253,23 @@ function updateRatesFromDaily() {
 // Update OT rate in global storage when changed
 // Recalculate all DTR rows (used when late start or end time changes)
 function recalculateAllRows() {
+    if (window.checkedDaysEditMode) {
+        applyCheckedDaysHeaderValuesToRows();
+        return;
+    }
+
+    window.checkedDaysDefaultSnapshot = getCurrentCheckedDaysValues();
+
+    const activeRow = getActiveDayOverrideRow();
+    if (activeRow) {
+        syncHeaderFieldsToDayOverride(activeRow);
+        calculateRowDTR(activeRow);
+        calculateTotals();
+        return;
+    } else {
+        captureGlobalRateFieldSnapshot();
+    }
+
     document.querySelectorAll('#dtr_rows tr').forEach(row => {
         const rowNum = row.getAttribute('data-row');
         if (rowNum) calculateRowDTR(rowNum);
@@ -7935,7 +11284,7 @@ function updateOTRate() {
     // Update summary display
     const summaryOtEl = document.getElementById('summary_ot_rate');
     if (summaryOtEl) summaryOtEl.textContent = otRate.toFixed(2);
-    
+
     // Update global rates
     if (window.dtrRates) {
         window.dtrRates.otRate = otRate;
@@ -7947,6 +11296,10 @@ function updateOTRate() {
         if (rowNum) calculateRowDTR(rowNum);
     });
     calculateTotals();
+
+    if (!getActiveDayOverrideRow()) {
+        captureGlobalRateFieldSnapshot();
+    }
 
     // Recalculate all TB5 rows with new OT rate
     const tb5Body = document.getElementById('tb5_dtr_body');
@@ -7962,6 +11315,11 @@ function updateOTRate() {
 // Initialize on page load
 document.addEventListener('DOMContentLoaded', function() {
     console.log('DOM Content Loaded - Initializing...');
+
+    setCheckedDaysModeLabel(false);
+    
+    // Restore employee tabs from localStorage (if any unsaved tabs remain from previous session)
+    const hasRestoredTabs = restoreTabsFromLocalStorage();
     
     // Initialize rates
     setTimeout(function() {
@@ -7997,6 +11355,17 @@ document.addEventListener('DOMContentLoaded', function() {
     
     // Load employee DTR cards
     loadEmployeeDTRCards();
+});
+
+// Auto-save tabs to localStorage when leaving the page
+window.addEventListener('beforeunload', function(e) {
+    const unsavedTabs = Object.values(employeeTabs).filter(t => !t.saved);
+    if (unsavedTabs.length > 0) {
+        saveTabsToLocalStorage();
+        // Warn user about unsaved data
+        e.preventDefault();
+        e.returnValue = '';
+    }
 });
 </script>
 

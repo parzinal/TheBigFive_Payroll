@@ -3,6 +3,13 @@
  * PHP Extensions Diagnostic Page
  * Check if required extensions are enabled
  */
+require_once '../config/bootstrap.php';
+require_once '../config/auth.php';
+// H2: Only admins may access diagnostic pages
+if (!isAuthenticated() || !isAdmin()) {
+    http_response_code(403);
+    die('Access Denied. Admin authentication required.');
+}
 ?>
 <!DOCTYPE html>
 <html>

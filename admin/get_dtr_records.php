@@ -5,11 +5,12 @@
  */
 
 require_once '../config/bootstrap.php';
+require_once '../config/auth.php';
 
 header('Content-Type: application/json');
 
-// Check if user is logged in
-if (!isset($_SESSION['user_id'])) {
+// H1: Require admin role
+if (!isAuthenticated() || !isAdmin()) {
     http_response_code(403);
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit();
@@ -20,6 +21,56 @@ require_once '../config/database.php';
 $employeeId = intval($_GET['employee_id'] ?? 0);
 $payrollPeriodId = intval($_GET['payroll_period_id'] ?? 0);
 $checkOnly = isset($_GET['check_only']) && $_GET['check_only'] == '1';
+$checkPeriods = isset($_GET['check_periods']) && $_GET['check_periods'] == '1';
+$year = intval($_GET['year'] ?? 0);
+$month = intval($_GET['month'] ?? 0);
+
+// Check periods mode - returns which cutoffs already have records
+if ($checkPeriods && $employeeId && $year && $month) {
+    try {
+        $pdo = getDBConnection();
+        
+        // Create date ranges for both periods
+        $monthStr = str_pad($month, 2, '0', STR_PAD_LEFT);
+        $lastDay = date('t', strtotime("$year-$monthStr-01"));
+        
+        $period1Start = "$year-$monthStr-01";
+        $period1End = "$year-$monthStr-15";
+        $period2Start = "$year-$monthStr-16";
+        $period2End = "$year-$monthStr-$lastDay";
+        
+        // Check for records in first period (1-15)
+        $stmt = $pdo->prepare("
+            SELECT COUNT(*) as count 
+            FROM dtr_records 
+            WHERE employee_id = ? 
+            AND dtr_date BETWEEN ? AND ?
+        ");
+        $stmt->execute([$employeeId, $period1Start, $period1End]);
+        $period1Exists = $stmt->fetch()['count'] > 0;
+        
+        // Check for records in second period (16-end)
+        $stmt->execute([$employeeId, $period2Start, $period2End]);
+        $period2Exists = $stmt->fetch()['count'] > 0;
+        
+        $existingPeriods = [];
+        if ($period1Exists) $existingPeriods[] = 12; // 12th cutoff
+        if ($period2Exists) $existingPeriods[] = 27; // 27th cutoff
+        
+        echo json_encode([
+            'success' => true,
+            'existing_periods' => $existingPeriods
+        ]);
+        exit();
+        
+    } catch (Exception $e) {
+        echo json_encode([
+            'success' => false,
+            'message' => 'Error checking periods: ' . $e->getMessage()
+        ]);
+        exit();
+    }
+}
 
 if (!$employeeId || !$payrollPeriodId) {
     echo json_encode(['success' => false, 'message' => 'Employee ID and Payroll Period ID are required']);

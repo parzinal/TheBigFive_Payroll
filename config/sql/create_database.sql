@@ -116,6 +116,7 @@ CREATE TABLE IF NOT EXISTS dtr_records (
     
     -- Attendance Status
     is_absent BOOLEAN DEFAULT FALSE,
+    is_training BOOLEAN DEFAULT FALSE,
     is_variable BOOLEAN DEFAULT FALSE,  -- Variable schedule flag
     
     -- Notes and Remarks

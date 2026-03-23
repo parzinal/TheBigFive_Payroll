@@ -264,34 +264,11 @@ require_once 'include/sidebar.php';
 ```php
 <?php
 require_once '../config/auth.php';
-
-// For admin-only API
 if (!isAuthenticated() || !isAdmin()) {
     http_response_code(401);
-    echo json_encode(['error' => 'Unauthorized']);
+    echo json_encode(['success' => false, 'message' => 'Unauthorized']);
     exit;
 }
-
-// For staff-only API
-if (!isAuthenticated() || !isStaff()) {
-    http_response_code(401);
-    echo json_encode(['error' => 'Unauthorized']);
-    exit;
-}
-
-// API logic here
+// Your API logic
 ?>
 ```
-
-## Summary
-
-The security system now ensures that:
-- ✅ **Staff cannot access admin pages** - even by changing URLs
-- ✅ **Admins cannot access staff pages** - even by changing URLs
-- ✅ **Unauthenticated users cannot access protected pages**
-- ✅ **Session hijacking is prevented** - user agent validation
-- ✅ **Sessions expire** - automatic timeout after 8 hours
-- ✅ **All API endpoints are protected** - role-based validation
-- ✅ **Secure login/logout** - proper session management
-
-The system is production-ready and provides enterprise-level security for role-based access control.

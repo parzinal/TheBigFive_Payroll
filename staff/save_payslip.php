@@ -109,7 +109,7 @@ try {
             WHERE id = ?
         ");
         
-        $stmt->execute([
+        $params = [
             $data['basic_monthly_salary'],
             $data['per_day_rate'],
             $data['per_hour_rate'],
@@ -135,7 +135,19 @@ try {
             $data['net_pay'],
             $_SESSION['user_id'],
             $existing['id']
-        ]);
+        ];
+        try {
+            $stmt->execute($params);
+        } catch (PDOException $e) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'DB update error in staff/save_payslip',
+                'error' => $e->getMessage(),
+                'query' => $stmt->queryString,
+                'params' => $params
+            ]);
+            exit;
+        }
         
         echo json_encode([
             'success' => true,
@@ -183,7 +195,7 @@ try {
             )
         ");
         
-        $stmt->execute([
+        $params = [
             $data['employee_id'],
             $payrollPeriodId,
             $data['basic_monthly_salary'],
@@ -210,7 +222,19 @@ try {
             $data['total_deductions'],
             $data['net_pay'],
             $_SESSION['user_id']
-        ]);
+        ];
+        try {
+            $stmt->execute($params);
+        } catch (PDOException $e) {
+            echo json_encode([
+                'success' => false,
+                'message' => 'DB insert error in staff/save_payslip',
+                'error' => $e->getMessage(),
+                'query' => $stmt->queryString,
+                'params' => $params
+            ]);
+            exit;
+        }
         
         $payslipId = $pdo->lastInsertId();
         

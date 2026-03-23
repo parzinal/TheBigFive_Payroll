@@ -1,4 +1,11 @@
 <?php
+// Staff cannot generate payroll - only admins
+require_once '../config/bootstrap.php';
+if (!isAdmin()) {
+    header('Location: payroll_list.php');
+    exit;
+}
+
 $page_title = "Generate Payroll";
 include 'include/header.php';
 
@@ -240,7 +247,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                                   net_pay = ?, computed_by = ?, computed_at = NOW()
                                   WHERE id = ?";
                 $stmt = $pdo->prepare($update_payroll);
-                $stmt->execute([
+                $params = [
                     $basic_salary, $per_day, $per_hour, $per_minute,
                     $total_work_days, $total_work_hours,
                     $total_late_hours, $total_undertime_hours,
@@ -250,7 +257,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $sss, $philhealth, $pagibig, $cash_advance,
                     $total_deductions, $net_pay,
                     $user_id, $existing_payroll['id']
-                ]);
+                ];
+                try {
+                    $stmt->execute($params);
+                } catch (PDOException $e) {
+                    $pdo->rollBack();
+                    echo json_encode([
+                        'success' => false,
+                        'message' => 'DB update error in staff/Generatepayroll',
+                        'error' => $e->getMessage(),
+                        'query' => $stmt->queryString,
+                        'params' => $params
+                    ]);
+                    exit;
+                }
             } else {
                 // Insert new payroll computation
                 $insert_payroll = "INSERT INTO payroll_computations
@@ -265,7 +285,7 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                                    computed_by, computed_at)
                                   VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW())";
                 $stmt = $pdo->prepare($insert_payroll);
-                $stmt->execute([
+                $params = [
                     $employee_id, $period_id,
                     $basic_salary, $per_day, $per_hour, $per_minute,
                     $total_work_days, $total_work_hours, $total_late_hours,
@@ -274,7 +294,20 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST' && isset($_POST['action'])) {
                     $late_deduction, $undertime_deduction, $absent_deduction,
                     $sss, $philhealth, $pagibig, $cash_advance,
                     $total_deductions, $net_pay, $user_id
-                ]);
+                ];
+                try {
+                    $stmt->execute($params);
+                } catch (PDOException $e) {
+                    $pdo->rollBack();
+                    echo json_encode([
+                        'success' => false,
+                        'message' => 'DB insert error in staff/Generatepayroll',
+                        'error' => $e->getMessage(),
+                        'query' => $stmt->queryString,
+                        'params' => $params
+                    ]);
+                    exit;
+                }
             }
             
             // Commit transaction
@@ -1502,8 +1535,8 @@ function generateDTRRows(startDate, endDate) {
 function calculateRates() {
     const basicSalary = parseFloat(document.getElementById('basicSalary').value) || 0;
     
-    // TB5: 30 days a month computation, 8 hours per day
-    const perDay = basicSalary / 30;
+    // Calculate based on 26 working days per month (Mon-Sat, excluding Sundays)
+    const perDay = basicSalary / 26;
     const perHour = perDay / 8;
     const perMinute = perHour / 60;
     
@@ -1529,7 +1562,7 @@ function timeToMinutes(timeStr) {
 function calculateRow(dayNum) {
     const isAbsent = document.getElementById(`absent_${dayNum}`).checked;
     const basicSalary = parseFloat(document.getElementById('basicSalary').value) || 0;
-    const perDay = basicSalary / 30; // TB5: 30 days a month computation
+    const perDay = basicSalary / 26; // 26 working days per month (Mon-Sat, excluding Sundays)
     const perHour = perDay / 8;
     const perMinute = perHour / 60;
     
@@ -1755,7 +1788,7 @@ function savePayroll() {
     const cashAdvance = parseFloat(document.getElementById('cashAdvance').value) || 0;
     
     const basicSalaryVal = basicSalary;
-    const perDay = basicSalaryVal / 30; // TB5: 30 days a month computation
+    const perDay = basicSalaryVal / 26; // 26 working days per month (Mon-Sat, excluding Sundays)
     const perHour = perDay / 8;
     const perMinute = perHour / 60;
     

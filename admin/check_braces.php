@@ -1,4 +1,12 @@
 <?php
+// H2: Auth guard for diagnostic tool
+require_once '../config/bootstrap.php';
+require_once '../config/auth.php';
+if (!isAuthenticated() || !isAdmin()) {
+    http_response_code(403);
+    die('Access Denied. Admin authentication required.');
+}
+
 // Count braces in the extractAllDataFromRows function with detailed line-by-line output
 $file = file_get_contents(__DIR__ . '/import_dtr.php');
 $lines = explode("\n", $file);

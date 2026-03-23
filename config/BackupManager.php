@@ -311,7 +311,16 @@ class BackupManager
      */
     public function restoreFromFile(string $filename): array
     {
+        // H4: Sanitize filename to prevent directory traversal
+        $filename = basename($filename);
         $filepath = $this->backupDir . DIRECTORY_SEPARATOR . $filename;
+
+        // Verify the resolved path is within the backup directory
+        $realBackupDir = realpath($this->backupDir);
+        $realFilePath = realpath($filepath);
+        if ($realFilePath === false || strpos($realFilePath, $realBackupDir) !== 0) {
+            return ['success' => false, 'message' => 'Invalid backup file path'];
+        }
 
         if (!file_exists($filepath)) {
             return ['success' => false, 'message' => 'Backup file not found'];
@@ -622,6 +631,8 @@ class BackupManager
      */
     public function getBackupInfo(string $filename): array
     {
+        // H4: Sanitize filename to prevent directory traversal
+        $filename = basename($filename);
         $filepath = $this->backupDir . DIRECTORY_SEPARATOR . $filename;
 
         if (!file_exists($filepath)) {

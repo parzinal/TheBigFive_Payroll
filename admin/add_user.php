@@ -58,12 +58,18 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
         $error = "Full name is required.";
     } elseif (strlen($full_name) < 2) {
         $error = "Full name must be at least 2 characters.";
+    } elseif (!preg_match('/^[\p{L}\s.\'-]+$/u', $full_name)) {
+        $error = "Full name contains invalid characters.";
     } elseif (empty($password)) {
         $error = "Password is required.";
     } elseif (strlen($password) < 6) {
         $error = "Password must be at least 6 characters long.";
     } elseif ($password !== $confirm_password) {
         $error = "Passwords do not match.";
+    } elseif (!in_array($role, ['admin', 'staff', 'user'])) {
+        $error = "Invalid role value.";
+    } elseif (!in_array($status, ['active', 'inactive'])) {
+        $error = "Invalid status value.";
     } else {
         try {
             $pdo = getDBConnection();
@@ -96,15 +102,23 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
                         $pdo
                     );
                     
-                    // Success - redirect to user management
-                    header('Location: user_management.php?success=Account created successfully');
-                    exit();
+                    // Success - show message and reset form
+                    $success = "Account created successfully! User: {$full_name} ({$username}) — Role: " . ucfirst($role);
+                    
+                    // Reset form fields
+                    $username = '';
+                    $email = '';
+                    $full_name = '';
+                    $role = 'staff';
+                    $status = 'active';
                 }
             }
         } catch (PDOException $e) {
             $error = "Error creating user: " . $e->getMessage();
         }
-    }    } // end CSRF else}
+    }
+    } // end CSRF else
+} // end POST if
 ?>
 
 <div class="main-content">
@@ -147,9 +161,24 @@ if ($_SERVER['REQUEST_METHOD'] === 'POST') {
     <?php endif; ?>
 
     <?php if ($success): ?>
-        <div class="alert alert-success">
+        <div class="alert alert-success" id="successAlert">
             <i class="fas fa-check-circle"></i> <?php echo htmlspecialchars($success); ?>
+            <span style="margin-left: auto; font-size: 13px; opacity: 0.8;">Redirecting to Account Management in <span id="countdown">3</span>s...</span>
         </div>
+        <script>
+            (function() {
+                let seconds = 3;
+                const countdownEl = document.getElementById('countdown');
+                const timer = setInterval(function() {
+                    seconds--;
+                    if (countdownEl) countdownEl.textContent = seconds;
+                    if (seconds <= 0) {
+                        clearInterval(timer);
+                        window.location.href = 'user_management.php';
+                    }
+                }, 1000);
+            })();
+        </script>
     <?php endif; ?>
 
     <div class="card">
@@ -693,6 +722,13 @@ document.getElementById('addUserForm').addEventListener('submit', function(e) {
     if (password !== confirmPassword) { showFieldError('confirm_password', 'Passwords do not match'); hasError = true; }
     
     if (hasError) { e.preventDefault(); return false; }
+
+    // S3: Prevent double-submit
+    const submitBtn = this.querySelector('button[type="submit"]');
+    if (submitBtn) {
+        submitBtn.disabled = true;
+        submitBtn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Creating...';
+    }
 });
 </script>
 

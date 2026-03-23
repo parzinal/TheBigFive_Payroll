@@ -1,8 +1,11 @@
 <?php
 /**
- * Staff Payroll List Page
- * Display all employees with DTR records and their payroll summaries (read-only)
+ * Staff Payroll List Page - Redirects to v2
  */
+require_once __DIR__ . '/payroll_list_v2.php';
+exit;
+
+/* === LEGACY CODE BELOW - NO LONGER EXECUTED === */
 
 $page_title = 'Payroll List';
 require_once 'include/header.php';

@@ -10,10 +10,12 @@ ini_set('display_errors', '0');
 error_reporting(E_ERROR | E_PARSE);
 
 require_once '../config/bootstrap.php';
+require_once '../config/auth.php';
 ini_set('display_errors', '0');
 error_reporting(E_ERROR | E_PARSE);
 
-if (!isset($_SESSION['user_id'])) {
+// H1: Require admin role
+if (!isAuthenticated() || !isAdmin()) {
     http_response_code(403);
     die('Unauthorized');
 }
@@ -189,19 +191,21 @@ $sheet->getStyle('B2:G2')->applyFromArray([
     'alignment' => ['horizontal'=> \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_LEFT],
 ]);
 
-// Time references
+// Time references (matching manual DTR calculator defaults)
 $sheet->setCellValue('H2', 17/24 + 46/1440);
-$sheet->setCellValue('I2', 7/24  + 35/1440);
-$sheet->setCellValue('J2', 17/24);
+$sheet->setCellValue('I2', 8/24);              // 8:00 AM - late threshold (matches manual DTR calc)
+$sheet->setCellValue('J2', 17/24);             // 5:00 PM - end time
 $sheet->getStyle('H2:J2')->getNumberFormat()->setFormatCode('h:mm AM/PM');
 
-// Salary input
+// Salary input — Basic (reference) and Per Day (independent input driving all calculations)
 $sheet->setCellValue('K2', 'BASIC');
 $sheet->setCellValue('L2', '►');
-$sheet->setCellValue('N2', $salary > 0 ? $salary : 13000);
-$sheet->setCellValue('O2', '=$N$2/30');
-$sheet->setCellValue('P2', '=($N$2/30)/8');
-$sheet->setCellValue('Q2', '=($N$2/30)/480');
+$sheet->setCellValue('N2', $salary > 0 ? $salary : 13000);  // Basic salary — reference only
+$effSalaryForRates = $salary > 0 ? $salary : 13000;
+$perDayRate = round($effSalaryForRates / 26, 6);
+$sheet->setCellValue('O2', round($perDayRate, 4));              // Per day — static value
+$sheet->setCellValue('P2', round($perDayRate / 8, 4));          // Per hour — static value
+$sheet->setCellValue('Q2', round($perDayRate / 480, 6));        // Per min — static value
 $sheet->setCellValue('R2', 0.5);
 $sheet->setCellValue('S2', 8/24 + 10/1440);
 $sheet->getStyle('S2')->getNumberFormat()->setFormatCode('h:mm AM/PM');
@@ -230,7 +234,7 @@ $sheet->getStyle('A3')->applyFromArray([
 ]);
 $sheet->setCellValue('H3', 'ALSO UNDERTIME OR');
 $sheet->setCellValue('I3', 17/24 + 45/1440);
-$sheet->setCellValue('J3', 8/24  + 6/1440);
+$sheet->setCellValue('J3', 8/24  + 10/1440);   // 8:10 AM - grace period end (matches manual DTR calc)
 $sheet->setCellValue('K3', 8/24  + 16/1440);
 $sheet->setCellValue('L3', 'VARIABLE');
 $sheet->getStyle('I3:K3')->getNumberFormat()->setFormatCode('h:mm AM/PM');
@@ -340,47 +344,82 @@ foreach ($datePeriod as $dt) {
     // Column F: Absent
     $sheet->setCellValue("F{$dataRow}", $absFlag);
 
-    // Column G: OT OUT if OT exists (use stored value or formula)
+    // Column G: OT OUT — only write actual stored OT value, no phantom formula
     if ($otOut !== null) {
         $sheet->setCellValue("G{$dataRow}", $otOut);
         $sheet->getStyle("G{$dataRow}")->getNumberFormat()->setFormatCode('h:mm');
-    } else {
-        $sheet->setCellValue("G{$dataRow}", "=IF(E{$dataRow}>\$I\$3,E{$dataRow},\"\")");
-        $sheet->getStyle("G{$dataRow}")->applyFromArray($blackStyle);
     }
 
     // Columns H-I: Halfday
     if ($hdIn  !== null) $sheet->setCellValue("H{$dataRow}", $hdIn);
     if ($hdOut !== null) $sheet->setCellValue("I{$dataRow}", $hdOut);
 
-    // Columns J-W: Computed (formulas — same as template)
-    $sheet->setCellValue("J{$dataRow}", "=IF(OR(F{$dataRow}=\"X\",AND(B{$dataRow}=\"\",E{$dataRow}=\"\")),0,IF(AND(H{$dataRow}<>\"\",I{$dataRow}<>\"\"),(MOD(I{$dataRow}-H{$dataRow},1)*24),(MOD(E{$dataRow}-B{$dataRow},1)*24)-1))");
-    $sheet->setCellValue("K{$dataRow}", "=IF(OR(F{$dataRow}=\"X\",B{$dataRow}=\"\"),0,IF(B{$dataRow}>\$I\$2,(B{$dataRow}-\$I\$2)*1440,0))");
-    $sheet->setCellValue("L{$dataRow}", "=IF(OR(F{$dataRow}=\"X\",E{$dataRow}=\"\"),0,IF(E{$dataRow}<\$J\$2,(\$J\$2-E{$dataRow})*24,0))");
-    $sheet->setCellValue("M{$dataRow}", "=IF(G{$dataRow}=\"\",0,(G{$dataRow}-\$J\$2)*24)");
-    $sheet->setCellValue("N{$dataRow}", "=IF(F{$dataRow}=\"X\",1,0)");
-    $sheet->setCellValue("O{$dataRow}", "=IF(N{$dataRow}=1,\$O\$2,0)");
-    $sheet->setCellValue("U{$dataRow}", "=IF(K{$dataRow}>270,0,K{$dataRow})");
-    $sheet->setCellValue("V{$dataRow}", "=IF(L{$dataRow}>15,0,L{$dataRow})");
-    $sheet->setCellValue("W{$dataRow}", "=IFERROR(M{$dataRow}*1,0)");
-    $sheet->setCellValue("P{$dataRow}", "=\$Q\$2*U{$dataRow}");
-    $sheet->setCellValue("Q{$dataRow}", "=\$P\$2*V{$dataRow}");
-    $sheet->setCellValue("R{$dataRow}", "=IF(OR(H{$dataRow}=\"\",I{$dataRow}=\"\"),0,(\$O\$2*AA{$dataRow})-(MOD(I{$dataRow}-H{$dataRow},1)*24.29)*\$P\$2)");
-    $sheet->setCellValue("S{$dataRow}", "=(\$P\$2*W{$dataRow})*1.25");
-    $sheet->setCellValue("T{$dataRow}", "=S{$dataRow}-SUM(O{$dataRow}:R{$dataRow})");
+    // Columns J-W: Write actual DB values (reliable for import) with formulas as visual fallback
+    // J: Total work hours (from DB)
+    $dbWorkHours = $rec ? floatval($rec['total_work_hours'] ?? 0) : 0;
+    $dbLateMins  = $rec ? floatval($rec['late_minutes'] ?? 0) : 0;
+    $dbUtHours   = $rec ? floatval($rec['undertime_hours'] ?? 0) : 0;
+    $dbOtHours   = $rec ? floatval($rec['daily_ot_hours'] ?? 0) : 0;
+    $dbNetSalary = $rec ? floatval($rec['net_salary'] ?? 0) : 0;
+    $dbIsHalfday = $rec ? intval($rec['is_halfday'] ?? 0) : 0;
 
-    // Column X: Gov't deduction (manual input — put actual value from DB)
+    $sheet->setCellValue("J{$dataRow}", $dbWorkHours);
+    // K: Late in minutes (with 10-min grace period, matching manual DTR calc)
+    $sheet->setCellValue("K{$dataRow}", $dbLateMins);
+    // L: Undertime in hours (with lunch adjustment, matching manual DTR calc)
+    $sheet->setCellValue("L{$dataRow}", $dbUtHours);
+    // M: OT hours
+    $sheet->setCellValue("M{$dataRow}", $dbOtHours);
+    // N: Absent day count
+    $sheet->setCellValue("N{$dataRow}", $isAbsent ? 1 : 0);
+
+    // Calculate rates from salary for deduction formulas
+    $effSalary = $salary > 0 ? $salary : 13000;
+    $dailyRate = $effSalary / 26;
+    $hourlyRate = $dailyRate / 8;
+    $perMin = $hourlyRate / 60;
+    $otRateVal = $hourlyRate * 1.25;
+
+    // O: Absent deduction
+    $sheet->setCellValue("O{$dataRow}", $isAbsent ? $dailyRate : 0);
+    // P: Late deduction = late_minutes * per_min
+    $lateDeduct = $dbLateMins * $perMin;
+    $sheet->setCellValue("P{$dataRow}", round($lateDeduct, 2));
+    // Q: Undertime deduction = undertime_hours * hourly_rate
+    $utDeduct = $dbUtHours * $hourlyRate;
+    $sheet->setCellValue("Q{$dataRow}", round($utDeduct, 2));
+    // R: Halfday deduction
+    $hdDeduct = $dbIsHalfday ? ($dailyRate / 2) : 0;
+    $sheet->setCellValue("R{$dataRow}", round($hdDeduct, 2));
+    // S: OT Pay = OT hours * OT rate
+    $otPay = $dbOtHours * $otRateVal;
+    $sheet->setCellValue("S{$dataRow}", round($otPay, 2));
+    // T: Net deductions (OT pay minus total deductions)
+    $totalDeductions = $lateDeduct + $utDeduct + $hdDeduct + ($isAbsent ? $dailyRate : 0);
+    $netDeductVal = $otPay - $totalDeductions;
+    $sheet->setCellValue("T{$dataRow}", round($netDeductVal, 2));
+
+    // U-W: Automatic calculation columns (same as K, L, M)
+    $sheet->setCellValue("U{$dataRow}", $dbLateMins);
+    $sheet->setCellValue("V{$dataRow}", $dbUtHours);
+    $sheet->setCellValue("W{$dataRow}", $dbOtHours);
+
+    // Column X: Gov't deduction (from DB)
     if ($govtDed > 0) {
         $sheet->setCellValue("X{$dataRow}", $govtDed);
         $sheet->getStyle("X{$dataRow}")->getNumberFormat()->setFormatCode('#,##0.00');
     }
 
-    // Column Y: Auto salary
-    $sheet->setCellValue("Y{$dataRow}", "=IF(N{$dataRow}=1,0,\$O\$2)+T{$dataRow}");
+    // Column Y: Auto salary (from DB or calculated)
+    $autoSalary = $dbNetSalary;
+    if ($autoSalary == 0 && !$isAbsent && ($amIn !== null || $pmOut !== null)) {
+        $autoSalary = $dailyRate - ($totalDeductions - $otPay);
+    }
+    $sheet->setCellValue("Y{$dataRow}", round($autoSalary, 2));
 
-    // Columns Z-AA: Helper flags (needed by column R halfday formula)
-    $sheet->setCellValue("Z{$dataRow}",  "=COUNTBLANK(I{$dataRow})");
-    $sheet->setCellValue("AA{$dataRow}", "=COUNTIF(Z{$dataRow},\"0\")");
+    // Columns Z-AA: Helper flags
+    $sheet->setCellValue("Z{$dataRow}",  ($hdOut === null) ? 1 : 0);
+    $sheet->setCellValue("AA{$dataRow}", ($hdOut !== null) ? 1 : 0);
 
     // Column AB: Remarks (actual text from DB)
     $sheet->setCellValue("AB{$dataRow}", $remarks ?: '');
@@ -449,7 +488,7 @@ $sheet->setCellValue("B{$r1}", '=$N$2');
 $sheet->setCellValue("A{$r2}", 'OT PAY:');
 $sheet->setCellValue("B{$r2}", "=S{$totalRow}");
 $sheet->setCellValue("A{$r3}", 'DTR DEDUCTIONS (Abs/Late/Under/Halfday):');
-$sheet->setCellValue("B{$r3}", "=T{$totalRow}");
+$sheet->setCellValue("B{$r3}", "=O{$totalRow}+P{$totalRow}+Q{$totalRow}+R{$totalRow}");
 $sheet->setCellValue("A{$r4}", "GOV'T DEDUCTIONS (SSS+PhilHealth+Pag-IBIG+CA):");
 $sheet->setCellValue("B{$r4}", $sssAmt + $philAmt + $pagAmt);
 $sheet->setCellValue("A{$r5}", 'CASH ADVANCE / OTHER DEDUCTIONS:');

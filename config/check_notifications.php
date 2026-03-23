@@ -4,8 +4,14 @@
  * Check if everything is set up correctly
  */
 
-// Allow access without login for troubleshooting
+// H2: Require admin auth for diagnostic pages
 require_once __DIR__ . '/bootstrap.php';
+require_once __DIR__ . '/auth.php';
+
+if (!isAuthenticated() || !isAdmin()) {
+    http_response_code(403);
+    die('Access Denied. Admin authentication required.');
+}
 
 require_once __DIR__ . '/database.php';
 

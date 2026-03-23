@@ -231,6 +231,48 @@ function notifyAttendanceMarked($user_id, $date) {
 }
 
 /**
+ * Notify admins and staff when a DTR file is imported/saved
+ */
+function notifyDTRImported($employee_name, $records_count, $actor = '') {
+    $by = $actor ? " by {$actor}" : '';
+    notifyAdmins(
+        'DTR File Imported',
+        "DTR records for {$employee_name} ({$records_count} entries) were imported{$by}.",
+        'info',
+        'fa-file-import',
+        'import_dtr.php'
+    );
+    return notifyStaff(
+        'DTR File Imported',
+        "DTR records for {$employee_name} ({$records_count} entries) were imported{$by}.",
+        'info',
+        'fa-file-import',
+        'import_dtr.php'
+    );
+}
+
+/**
+ * Notify admins and staff when a payslip is generated for an employee
+ */
+function notifyPayslipGenerated($employee_name, $period, $net_pay, $action = 'Generated') {
+    $formatted = '₱' . number_format($net_pay, 2);
+    notifyAdmins(
+        "Payslip {$action}",
+        "Payslip for {$employee_name} ({$period}) — Net Pay: {$formatted}.",
+        'success',
+        'fa-file-invoice-dollar',
+        'payroll_list.php'
+    );
+    return notifyStaff(
+        "Payslip {$action}",
+        "Payslip for {$employee_name} ({$period}) — Net Pay: {$formatted}.",
+        'success',
+        'fa-file-invoice-dollar',
+        'payroll_list.php'
+    );
+}
+
+/**
  * Notify about system maintenance
  */
 function notifySystemMaintenance($start_time, $end_time) {
