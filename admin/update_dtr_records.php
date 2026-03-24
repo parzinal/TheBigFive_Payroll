@@ -50,7 +50,7 @@ error_reporting(0);
 // Initialize database connection
 $pdo = getDBConnection();
 
-// Check authentication (use isAuthenticated instead of isLoggedIn)
+// Check authentication (admin only)
 if (!isAuthenticated() || !isAdmin()) {
     ob_end_clean();
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);

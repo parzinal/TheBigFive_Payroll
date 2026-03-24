@@ -1,5 +1,31 @@
 <?php
-header('Location: payslip_history_v2.php');
+/**
+ * Staff Payslip History Page
+ * Mirrors admin/payslip_history.php output so staff view stays identical to admin.
+ */
+
+ob_start();
+
+// Ensure relative includes like include/header.php resolve to staff/include.
+set_include_path(__DIR__ . PATH_SEPARATOR . get_include_path());
+
+require __DIR__ . '/../admin/payslip_history.php';
+
+$html = ob_get_clean();
+
+$search = [
+    'href="dashboard.php"',
+    'get_employee_payslips.php',
+    'generate_payslip_pdf.php',
+];
+
+$replace = [
+    'href="dashboard_staff.php"',
+    '../admin/get_employee_payslips.php',
+    '../admin/generate_payslip_pdf.php',
+];
+
+echo str_replace($search, $replace, $html);
 exit;
 
 /**

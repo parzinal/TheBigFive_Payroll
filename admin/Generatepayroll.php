@@ -391,7 +391,7 @@ $payroll_periods = $stmt->fetchAll();
                                         <th rowspan="3" class="th-deduct">UNDERTIME<br>DEDUCT</th>
                                         <th rowspan="3" class="th-deduct">HALFDAY<br>DEDUCT</th>
                                         <th rowspan="3" class="th-pay">OT PAY</th>
-                                        <th rowspan="3" class="th-pay">OT PAY</th>
+                                        <th rowspan="3" class="th-calc">MINUS OT<br>TOTAL<br>DEDUCTIONS</th>
                                         <th colspan="3" class="th-group th-auto-calc">AUTOMATIC CALCULATIONS</th>
                                         <th rowspan="3" class="th-manual">Government<br>Benefits</th>
                                         <th rowspan="3" class="th-auto-salary">Net<br>Salary</th>
@@ -6209,7 +6209,7 @@ function addDTRRow(rowNum = null, dateStr = null, skipUpdateCalls = false) {
         <td><input type="number" name="undertime_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Undertime deduction"></td>
         <td><input type="number" name="halfday_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Halfday deduction (auto-calculated when work hours < 4)"></td>
         <td><input type="number" name="ot_pay_${rowNum}" data-row="${rowNum}" class="dtr-pay pay-highlight" readonly value="0.00" step="0.01" title="OT payment"></td>
-        <td><input type="number" name="net_deduct_${rowNum}" data-row="${rowNum}" class="dtr-pay pay-highlight" readonly value="0.00" step="0.01" title="OT payment"></td>
+        <td><input type="number" name="net_deduct_${rowNum}" data-row="${rowNum}" class="dtr-calc net-deduct-highlight" readonly value="0.00" step="0.01" title="Total deductions minus OT pay"></td>
         <td><input type="number" name="late_min_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Late in minutes calculation"></td>
         <td><input type="number" name="undertime_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Undertime calculation"></td>
         <td><input type="number" name="ot_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="OT calculation"></td>
@@ -6647,10 +6647,8 @@ function calculateRowDTR(rowNum) {
         // If within grace period, counts from scheduled start time
         workHours = calculateHours(amIn, pmOut, effectiveLateThreshold);
         
-        // Calculate OT hours (TB5: out time beyond closing). If OT OUT is blank,
-        // fallback to PM OUT so 19:00 PM OUT still records OT.
-        const otReference = (otOut && otOut.trim() !== '') ? otOut : pmOut;
-        const otMinutes = calculateOTMinutes(otReference, effectiveEndThreshold);
+        // Calculate OT hours (TB5: otOut - closing_time)
+        const otMinutes = calculateOTMinutes(otOut, effectiveEndThreshold);
         otHours = otMinutes / 60;
     }
     
@@ -6679,7 +6677,6 @@ function calculateRowDTR(rowNum) {
     // Calculate deductions and payments (TB5 format)
     const lateDeduct = lateMinutes * perMin;  // TB5: LATE/MIN DEDUCT = late mins * per min rate
     const undertimeDeduct = undertimeHours * hourlyRate;
-    const totalDeductions = lateDeduct + undertimeDeduct + halfdayDeduct;
     const otPay = otHours * otRate;
     
     // Update row fields
@@ -6702,8 +6699,9 @@ function calculateRowDTR(rowNum) {
     
     document.querySelector(`input[name="ot_pay_${rowNum}"]`).value = otPay.toFixed(2);
     
-    // Mirror OT pay in this column (requested behavior)
-    const netDeduct = otPay;
+    // Calculate net deductions (Total Deductions - OT Pay)
+    const totalDeductions = lateDeduct + undertimeDeduct + halfdayDeduct;
+    const netDeduct = totalDeductions - otPay;
     const netDeductInput = document.querySelector(`input[name="net_deduct_${rowNum}"]`);
     if (netDeductInput) netDeductInput.value = netDeduct.toFixed(2);
     
@@ -6979,8 +6977,8 @@ function calculateTotals() {
         }
     });
     
-    // This column now mirrors OT Pay total.
-    const totalNetDeduct = totalOTPay;
+    // Calculate total net deductions (include halfday deduction)
+    const totalNetDeduct = (totalLateDeduct + totalUndertimeDeduct + totalHalfdayDeduct) - totalOTPay;
     
     // Update totals row - values already in correct units (hours/minutes)
     const workHrsEl = document.getElementById('total_work_hours');
@@ -11037,7 +11035,7 @@ function createDTRRowFromData(rowNum, data) {
         <td><input type="number" name="undertime_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Undertime deduction"></td>
         <td><input type="number" name="halfday_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Halfday deduction (auto-calculated when work hours < 4)"></td>
         <td><input type="number" name="ot_pay_${rowNum}" data-row="${rowNum}" class="dtr-pay pay-highlight" readonly value="0.00" step="0.01" title="OT payment"></td>
-        <td><input type="number" name="net_deduct_${rowNum}" data-row="${rowNum}" class="dtr-pay pay-highlight" readonly value="0.00" step="0.01" title="OT payment"></td>
+        <td><input type="number" name="net_deduct_${rowNum}" data-row="${rowNum}" class="dtr-calc net-deduct-highlight" readonly value="0.00" step="0.01" title="Total deductions minus OT pay"></td>
         <td><input type="number" name="late_min_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Late in minutes calculation"></td>
         <td><input type="number" name="undertime_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Undertime calculation"></td>
         <td><input type="number" name="ot_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="OT calculation"></td>

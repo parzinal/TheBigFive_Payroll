@@ -205,7 +205,8 @@ $tardiness = floatval($dtr['late_deduct']      ?? 0)
 // Fallback: if no JSON dtr_data breakdown, use the direct DB columns
 if ($tardiness == 0 && empty($dtr)) {
     $tardiness = floatval($p['late_deduction']      ?? 0)
-         + floatval($p['undertime_deduction']  ?? 0);
+     + floatval($p['undertime_deduction']  ?? 0)
+     + floatval($notes['halfday_deduct']   ?? 0);
 }
 
 // LOAN = union fees + pension contributions
@@ -216,9 +217,9 @@ $loan = floatval($notes['union_fees'] ?? 0)
 $others_ca = floatval($notes['other_deductions'] ?? 0)
            + floatval($p['other_deductions']      ?? 0);
 
-// Totals (taken directly from DB — already computed by save_dtr.php)
+// Totals
 $gross_pay    = floatval($p['total_earnings']);
-$total_deduct = floatval($p['total_deductions']);
+$government_deductions = $wh_tax + $sss + $philheath + $pagibig;
 $net_pay      = floatval($p['net_pay']);
 
 // ── Period / Cut-off label ────────────────────────────────────────────────────
@@ -642,8 +643,8 @@ td    { vertical-align:middle; }
         <td class="sum-val">P&nbsp;' . fmt($gross_pay) . '</td>
       </tr>
       <tr class="sum-row">
-        <td class="sum-label">Total Deductions</td>
-        <td class="sum-val" style="color:#dc2626;">P&nbsp;' . fmt($total_deduct) . '</td>
+        <td class="sum-label">Government Deductions</td>
+        <td class="sum-val" style="color:#dc2626;">P&nbsp;' . fmt($government_deductions) . '</td>
       </tr>
     </table>
 

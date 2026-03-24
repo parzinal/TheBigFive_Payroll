@@ -14,8 +14,8 @@ require_once '../config/auth.php';
 ini_set('display_errors', '0');
 error_reporting(E_ERROR | E_PARSE);
 
-// H1: Require admin role
-if (!isAuthenticated() || !isAdmin()) {
+// Allow admin and staff roles
+if (!isAuthenticated() || (!isAdmin() && !isStaff())) {
     http_response_code(403);
     die('Unauthorized');
 }

@@ -672,18 +672,17 @@ function generateReceiptHTML(payslip) {
     const sss        = parseFloat(payslip.sss_contribution         || 0);
     const philhealth = parseFloat(payslip.philhealth_contribution  || 0);
     const pagibig    = parseFloat(payslip.pagibig_contribution     || 0);
-    const tardiness  = (parseFloat(dtr.late_deduct      || 0)
-                      + parseFloat(dtr.undertime_deduct || 0)
-                      + parseFloat(dtr.halfday_deduct   || 0)
-                      + parseFloat(dtr.absent_deduct    || 0));
+    const lateDeduct      = parseFloat(dtr.late_deduct      || payslip.late_deduction      || 0);
+    const undertimeDeduct = parseFloat(dtr.undertime_deduct || payslip.undertime_deduction || 0);
+    const halfdayDeduct   = parseFloat(dtr.halfday_deduct   || notes.halfday_deduct        || 0);
     const loan       = (parseFloat(notes.student_loan || 0)
                       + parseFloat(notes.union_fees   || 0)
                       + parseFloat(notes.pension      || 0));
     const othersCa   = (parseFloat(notes.other_deductions || 0)
                       + parseFloat(payslip.other_deductions || 0));
 
-    const grossPay    = parseFloat(payslip.total_earnings    || 0);
-    const totalDeduct = parseFloat(payslip.total_deductions  || 0);
+    const grossPay             = parseFloat(payslip.total_earnings || 0);
+    const governmentDeductions = whTax + sss + philhealth + pagibig;
     const netPay      = parseFloat(payslip.net_pay           || 0);
     const otMinutes   = Math.round(otHours * 60);
 
@@ -821,7 +820,9 @@ function generateReceiptHTML(payslip) {
           <tr class="tb5-dr"><td class="tb5-rl">SSS</td>            <td style="text-align:right;">${dedCell(sss)}</td></tr>
           <tr class="tb5-dr"><td class="tb5-rl">PhilHealth</td>     <td style="text-align:right;">${dedCell(philhealth)}</td></tr>
           <tr class="tb5-dr"><td class="tb5-rl">Pag-IBIG</td>       <td style="text-align:right;">${dedCell(pagibig)}</td></tr>
-          <tr class="tb5-dr"><td class="tb5-rl">Tardiness</td>      <td style="text-align:right;">${dedCell(tardiness)}</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">Late Deduct</td>    <td style="text-align:right;">${dedCell(lateDeduct)}</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">Undertime Deduct</td><td style="text-align:right;">${dedCell(undertimeDeduct)}</td></tr>
+          <tr class="tb5-dr"><td class="tb5-rl">Halfday Deduct</td> <td style="text-align:right;">${dedCell(halfdayDeduct)}</td></tr>
           <tr class="tb5-dr"><td class="tb5-rl">Loan</td>           <td style="text-align:right;">${dedCell(loan)}</td></tr>
           <tr class="tb5-dr"><td class="tb5-rl">Others / C.A.</td>  <td style="text-align:right;">${dedCell(othersCa)}</td></tr>
         </table>
@@ -839,8 +840,8 @@ function generateReceiptHTML(payslip) {
           </tr></table>
         </div>
         <table class="tb5-sum">
-          <tr><td class="tb5-sl">Gross Pay</td>        <td class="tb5-sv">P ${fmt(grossPay)}</td></tr>
-          <tr><td class="tb5-sl">Total Deductions</td> <td class="tb5-svr">P ${fmt(totalDeduct)}</td></tr>
+                    <tr><td class="tb5-sl">Gross Pay</td>             <td class="tb5-sv">P ${fmt(grossPay)}</td></tr>
+                    <tr><td class="tb5-sl">Government Deductions</td> <td class="tb5-svr">P ${fmt(governmentDeductions)}</td></tr>
         </table>
         <div class="tb5-net-box">
           <span class="tb5-net-t">Net Pay</span>

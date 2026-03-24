@@ -1,8 +1,76 @@
 <?php
 /**
- * Staff Payroll List Page - Redirects to v2
+ * Staff Payroll List Page
+ * Mirrors admin/payroll_list.php output so staff view stays identical to admin.
  */
-require_once __DIR__ . '/payroll_list_v2.php';
+
+ob_start();
+
+// Ensure relative includes like include/header.php resolve to staff/include.
+set_include_path(__DIR__ . PATH_SEPARATOR . get_include_path());
+
+require __DIR__ . '/../admin/payroll_list.php';
+
+$html = ob_get_clean();
+
+$search = [
+    'href="dashboard.php"',
+    'get_employee_dtr_months.php',
+    'get_employee_dtr_data.php',
+    'save_cutoff_payslip.php',
+];
+
+$replace = [
+    'href="dashboard_staff.php"',
+    '../admin/get_employee_dtr_months.php',
+    '../admin/get_employee_dtr_data.php',
+    '../admin/save_cutoff_payslip.php',
+];
+
+$html = str_replace($search, $replace, $html);
+
+$staffLockScript = <<<HTML
+<style>
+/* Staff is view-only: hide editing and payroll generation controls */
+#btn_edit_mode,
+#btn_save_dtr,
+.btn-header-primary,
+.btn-modern.btn-add,
+a[href="Generatepayroll.php"] {
+    display: none !important;
+}
+</style>
+<script>
+document.addEventListener('DOMContentLoaded', function () {
+    // Staff cannot edit/generate; keep page view-only.
+    document.querySelectorAll('.btn-header-primary, .btn-modern.btn-add, a[href="Generatepayroll.php"]').forEach(function (el) {
+        el.remove();
+    });
+
+    var editBtn = document.getElementById('btn_edit_mode');
+    if (editBtn) {
+        editBtn.style.display = 'none';
+    }
+
+    var saveBtn = document.getElementById('btn_save_dtr');
+    if (saveBtn) {
+        saveBtn.style.display = 'none';
+    }
+
+    // Keep Generate Payslip visible for staff.
+});
+</script>
+HTML;
+
+// Inject only before the final closing </body> to avoid corrupting embedded template strings.
+$bodyClosePos = strripos($html, '</body>');
+if ($bodyClosePos !== false) {
+    $html = substr_replace($html, $staffLockScript . '</body>', $bodyClosePos, 7);
+} else {
+    $html .= $staffLockScript;
+}
+
+echo $html;
 exit;
 
 /* === LEGACY CODE BELOW - NO LONGER EXECUTED === */
