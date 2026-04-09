@@ -463,7 +463,8 @@ function saveDTRRecordsFromForm($pdo, $employeeId, $payrollPeriodId, $createdBy)
         $halfdayOut = $_POST["halfday_out_{$rowNum}"] ?? null;
         $isAbsent = isset($_POST["absent_{$rowNum}"]) ? 1 : 0;
         $workHours = floatval($_POST["work_hours_{$rowNum}"] ?? 0);
-        $lateMins = intval($_POST["late_mins_{$rowNum}"] ?? 0);
+        $lateMinsRaw = $_POST["actual_late_mins_{$rowNum}"] ?? ($_POST["late_mins_{$rowNum}"] ?? 0);
+        $lateMins = (int) round(floatval($lateMinsRaw));
         $undertime = floatval($_POST["undertime_{$rowNum}"] ?? 0);
         $otHours = floatval($_POST["ot_hours_{$rowNum}"] ?? 0);
         $govtDeduct = floatval($_POST["govt_{$rowNum}"] ?? 0);

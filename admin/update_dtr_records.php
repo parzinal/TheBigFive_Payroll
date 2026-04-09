@@ -195,6 +195,7 @@ try {
             late_minutes = :late_mins,
             undertime_hours = :ut_hrs,
             daily_ot_hours = :ot_hrs,
+            govt_deduct = :govt_deduct,
             remarks = :remarks,
             updated_at = NOW()
         WHERE id = :id AND employee_id = :emp_id
@@ -234,6 +235,7 @@ try {
             ':late_mins' => isset($rec['late_minutes']) ? (int)$rec['late_minutes'] : 0,
             ':ut_hrs' => isset($rec['undertime_hours']) ? (float)$rec['undertime_hours'] : 0,
             ':ot_hrs' => isset($rec['daily_ot_hours']) ? (float)$rec['daily_ot_hours'] : 0,
+            ':govt_deduct' => isset($rec['govt_deduct']) ? (float)$rec['govt_deduct'] : 0,
             ':remarks' => isset($rec['remarks']) ? trim($rec['remarks']) : ''
         ]);
         

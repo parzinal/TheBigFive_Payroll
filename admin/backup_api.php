@@ -280,6 +280,89 @@ function fallbackFormatFileSize($bytes) {
     return round($bytes / pow(1024, $i), 2) . ' ' . $units[$i];
 }
 
+function ensureSalaryRulesTable(PDO $pdo): void {
+    $pdo->exec("\n        CREATE TABLE IF NOT EXISTS payroll_shift_rules (\n            shift_code VARCHAR(20) PRIMARY KEY,\n            shift_name VARCHAR(100) NOT NULL,\n            per_day_rate DECIMAL(12,2) NOT NULL DEFAULT 0,\n            ot_rate DECIMAL(12,2) NOT NULL DEFAULT 0,\n            time_in TIME NOT NULL DEFAULT '08:00:00',\n            time_out TIME NOT NULL DEFAULT '17:00:00',\n            updated_by INT NULL,\n            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP\n        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci\n    ");
+
+    // Backward-compatible migration for existing tables.
+    try {
+        $pdo->exec("ALTER TABLE payroll_shift_rules ADD COLUMN ot_rate DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER per_day_rate");
+    } catch (\Throwable $e) {
+        // Ignore if column already exists.
+    }
+
+    $pdo->exec("\n        INSERT IGNORE INTO payroll_shift_rules (shift_code, shift_name, per_day_rate, ot_rate, time_in, time_out) VALUES\n        ('shift_1', 'Shift 1', 0.00, 0.00, '08:00:00', '17:00:00'),\n        ('shift_2', 'Shift 2', 0.00, 0.00, '08:00:00', '17:00:00')\n    ");
+}
+
+function ensurePayrollRuleSettingsTable(PDO $pdo): void {
+    $pdo->exec("\n        CREATE TABLE IF NOT EXISTS payroll_rule_settings (\n            id TINYINT UNSIGNED PRIMARY KEY,\n            late_rule_1_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_1_equivalent_minutes DECIMAL(10,2) NULL,\n            late_rule_2_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_2_equivalent_minutes DECIMAL(10,2) NULL,\n            late_rule_3_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_3_equivalent_minutes DECIMAL(10,2) NULL,\n            updated_by INT NULL,\n            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP\n        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci\n    ");
+
+    // Backward-compatible migration for existing single-rule tables.
+    try {
+        $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN late_rule_1_actual_minutes DECIMAL(10,2) NULL AFTER id");
+    } catch (\Throwable $e) {
+        // Ignore if column already exists.
+    }
+    try {
+        $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN late_rule_1_equivalent_minutes DECIMAL(10,2) NULL AFTER late_rule_1_actual_minutes");
+    } catch (\Throwable $e) {
+        // Ignore if column already exists.
+    }
+    try {
+        $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN late_rule_2_actual_minutes DECIMAL(10,2) NULL AFTER late_rule_1_equivalent_minutes");
+    } catch (\Throwable $e) {
+        // Ignore if column already exists.
+    }
+    try {
+        $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN late_rule_2_equivalent_minutes DECIMAL(10,2) NULL AFTER late_rule_2_actual_minutes");
+    } catch (\Throwable $e) {
+        // Ignore if column already exists.
+    }
+    try {
+        $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN late_rule_3_actual_minutes DECIMAL(10,2) NULL AFTER late_rule_2_equivalent_minutes");
+    } catch (\Throwable $e) {
+        // Ignore if column already exists.
+    }
+    try {
+        $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN late_rule_3_equivalent_minutes DECIMAL(10,2) NULL AFTER late_rule_3_actual_minutes");
+    } catch (\Throwable $e) {
+        // Ignore if column already exists.
+    }
+
+    $pdo->exec("\n        INSERT IGNORE INTO payroll_rule_settings (id)\n        VALUES (1)\n    ");
+}
+
+function normalizeRuleTime(string $value, string $fallback): string {
+    $value = trim($value);
+    if (!preg_match('/^(?:[01]?\d|2[0-3]):[0-5]\d$/', $value)) {
+        return $fallback;
+    }
+    [$h, $m] = explode(':', $value);
+    return str_pad((string)intval($h), 2, '0', STR_PAD_LEFT) . ':' . $m;
+}
+
+function normalizeRuleRate($value): float {
+    $num = floatval($value);
+    if (!is_finite($num) || $num < 0) {
+        return 0.0;
+    }
+    return round($num, 2);
+}
+
+function normalizeRuleMinutesOrNull($value): ?float {
+    if ($value === null) {
+        return null;
+    }
+    $raw = trim((string)$value);
+    if ($raw === '') {
+        return null;
+    }
+    $num = floatval($raw);
+    if (!is_finite($num) || $num <= 0) {
+        return null;
+    }
+    return round(min(1440.0, $num), 2);
+}
+
 // Get the action
 $action = $_POST['action'] ?? $_GET['action'] ?? '';
 
@@ -633,6 +716,218 @@ try {
                 }
             }
             echo json_encode(['success' => true, 'settings' => $settings]);
+            break;
+
+        // =====================================================
+        // GET SALARY RULES (SHIFT 1 / SHIFT 2)
+        // =====================================================
+        case 'get_salary_rules':
+            $pdo = getDBConnection();
+            ensureSalaryRulesTable($pdo);
+            ensurePayrollRuleSettingsTable($pdo);
+
+            $stmt = $pdo->query("\n                SELECT
+                    shift_code,
+                    shift_name,
+                    per_day_rate,
+                    ot_rate,
+                    DATE_FORMAT(time_in, '%H:%i') AS time_in,
+                    DATE_FORMAT(time_out, '%H:%i') AS time_out
+                FROM payroll_shift_rules
+                WHERE shift_code IN ('shift_1', 'shift_2')
+                ORDER BY shift_code ASC
+            ");
+
+            $rules = [
+                'shift_1' => [
+                    'shift_code' => 'shift_1',
+                    'shift_name' => 'Shift 1',
+                    'per_day_rate' => 0,
+                    'ot_rate' => 0,
+                    'time_in' => '08:00',
+                    'time_out' => '17:00',
+                ],
+                'shift_2' => [
+                    'shift_code' => 'shift_2',
+                    'shift_name' => 'Shift 2',
+                    'per_day_rate' => 0,
+                    'ot_rate' => 0,
+                    'time_in' => '08:00',
+                    'time_out' => '17:00',
+                ],
+            ];
+
+            while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+                $code = $row['shift_code'] ?? '';
+                if (!isset($rules[$code])) {
+                    continue;
+                }
+                $rules[$code] = [
+                    'shift_code' => $code,
+                    'shift_name' => trim((string)($row['shift_name'] ?? ($code === 'shift_2' ? 'Shift 2' : 'Shift 1'))),
+                    'per_day_rate' => round(floatval($row['per_day_rate'] ?? 0), 2),
+                    'ot_rate' => round(floatval($row['ot_rate'] ?? 0), 2),
+                    'time_in' => trim((string)($row['time_in'] ?? '08:00')),
+                    'time_out' => trim((string)($row['time_out'] ?? '17:00')),
+                ];
+            }
+
+            $lateRuleStmt = $pdo->prepare("SELECT * FROM payroll_rule_settings WHERE id = 1 LIMIT 1");
+            $lateRuleStmt->execute();
+            $lateRuleRow = $lateRuleStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+            $lateRules = [];
+            for ($i = 1; $i <= 3; $i++) {
+                $actual = normalizeRuleMinutesOrNull($lateRuleRow["late_rule_{$i}_actual_minutes"] ?? null);
+                $equivalent = normalizeRuleMinutesOrNull($lateRuleRow["late_rule_{$i}_equivalent_minutes"] ?? null);
+                $multiplier = ($actual !== null && $equivalent !== null)
+                    ? round($equivalent / max(0.01, $actual), 4)
+                    : null;
+
+                $lateRules[] = [
+                    'actual_minutes' => $actual,
+                    'equivalent_minutes' => $equivalent,
+                    'multiplier' => $multiplier,
+                ];
+            }
+
+            $legacyLateRule = null;
+            foreach ($lateRules as $ruleItem) {
+                if ($ruleItem['actual_minutes'] !== null && $ruleItem['equivalent_minutes'] !== null) {
+                    $legacyLateRule = $ruleItem;
+                    break;
+                }
+            }
+
+            echo json_encode([
+                'success' => true,
+                'rules' => $rules,
+                'late_rules' => $lateRules,
+                // Backward-compatible legacy shape for older consumers.
+                'late_rule' => $legacyLateRule,
+            ]);
+            break;
+
+        // =====================================================
+        // SAVE SALARY RULES (SHIFT 1 / SHIFT 2)
+        // =====================================================
+        case 'save_salary_rules':
+            $pdo = getDBConnection();
+            ensureSalaryRulesTable($pdo);
+            ensurePayrollRuleSettingsTable($pdo);
+
+            $rulesToSave = [
+                'shift_1' => [
+                    'shift_name' => trim((string)($_POST['shift_1_name'] ?? 'Shift 1')) ?: 'Shift 1',
+                    'per_day_rate' => normalizeRuleRate($_POST['shift_1_per_day_rate'] ?? 0),
+                    'ot_rate' => normalizeRuleRate($_POST['shift_1_ot_rate'] ?? 0),
+                    'time_in' => normalizeRuleTime((string)($_POST['shift_1_time_in'] ?? '08:00'), '08:00'),
+                    'time_out' => normalizeRuleTime((string)($_POST['shift_1_time_out'] ?? '17:00'), '17:00'),
+                ],
+                'shift_2' => [
+                    'shift_name' => trim((string)($_POST['shift_2_name'] ?? 'Shift 2')) ?: 'Shift 2',
+                    'per_day_rate' => normalizeRuleRate($_POST['shift_2_per_day_rate'] ?? 0),
+                    'ot_rate' => normalizeRuleRate($_POST['shift_2_ot_rate'] ?? 0),
+                    'time_in' => normalizeRuleTime((string)($_POST['shift_2_time_in'] ?? '08:00'), '08:00'),
+                    'time_out' => normalizeRuleTime((string)($_POST['shift_2_time_out'] ?? '17:00'), '17:00'),
+                ],
+            ];
+
+            $lateRules = [];
+            for ($i = 1; $i <= 3; $i++) {
+                $actual = normalizeRuleMinutesOrNull($_POST["late_rule_{$i}_actual_minutes"] ?? null);
+                $equivalent = normalizeRuleMinutesOrNull($_POST["late_rule_{$i}_equivalent_minutes"] ?? null);
+                $multiplier = ($actual !== null && $equivalent !== null)
+                    ? round($equivalent / max(0.01, $actual), 4)
+                    : null;
+
+                $lateRules[] = [
+                    'actual_minutes' => $actual,
+                    'equivalent_minutes' => $equivalent,
+                    'multiplier' => $multiplier,
+                ];
+            }
+
+            $stmt = $pdo->prepare("\n                INSERT INTO payroll_shift_rules (shift_code, shift_name, per_day_rate, ot_rate, time_in, time_out, updated_by)\n                VALUES (?, ?, ?, ?, ?, ?, ?)\n                ON DUPLICATE KEY UPDATE\n                    shift_name = VALUES(shift_name),\n                    per_day_rate = VALUES(per_day_rate),\n                    ot_rate = VALUES(ot_rate),\n                    time_in = VALUES(time_in),\n                    time_out = VALUES(time_out),\n                    updated_by = VALUES(updated_by),\n                    updated_at = CURRENT_TIMESTAMP\n            ");
+
+            foreach ($rulesToSave as $shiftCode => $rule) {
+                $stmt->execute([
+                    $shiftCode,
+                    $rule['shift_name'],
+                    $rule['per_day_rate'],
+                    $rule['ot_rate'],
+                    $rule['time_in'] . ':00',
+                    $rule['time_out'] . ':00',
+                    $_SESSION['user_id'] ?? null,
+                ]);
+            }
+
+            $lateRuleStmt = $pdo->prepare("\n                INSERT INTO payroll_rule_settings (id, late_rule_1_actual_minutes, late_rule_1_equivalent_minutes, late_rule_2_actual_minutes, late_rule_2_equivalent_minutes, late_rule_3_actual_minutes, late_rule_3_equivalent_minutes, updated_by)\n                VALUES (1, ?, ?, ?, ?, ?, ?, ?)\n                ON DUPLICATE KEY UPDATE\n                    late_rule_1_actual_minutes = VALUES(late_rule_1_actual_minutes),\n                    late_rule_1_equivalent_minutes = VALUES(late_rule_1_equivalent_minutes),\n                    late_rule_2_actual_minutes = VALUES(late_rule_2_actual_minutes),\n                    late_rule_2_equivalent_minutes = VALUES(late_rule_2_equivalent_minutes),\n                    late_rule_3_actual_minutes = VALUES(late_rule_3_actual_minutes),\n                    late_rule_3_equivalent_minutes = VALUES(late_rule_3_equivalent_minutes),\n                    updated_by = VALUES(updated_by),\n                    updated_at = CURRENT_TIMESTAMP\n            ");
+            $lateRuleStmt->execute([
+                $lateRules[0]['actual_minutes'],
+                $lateRules[0]['equivalent_minutes'],
+                $lateRules[1]['actual_minutes'],
+                $lateRules[1]['equivalent_minutes'],
+                $lateRules[2]['actual_minutes'],
+                $lateRules[2]['equivalent_minutes'],
+                $_SESSION['user_id'] ?? null,
+            ]);
+
+            $lateRuleLogItems = [];
+            foreach ($lateRules as $idx => $ruleItem) {
+                if ($ruleItem['actual_minutes'] === null || $ruleItem['equivalent_minutes'] === null) {
+                    continue;
+                }
+                $lateRuleLogItems[] = sprintf(
+                    'R%s %s->%s (x%s)',
+                    $idx + 1,
+                    number_format($ruleItem['actual_minutes'], 2),
+                    number_format($ruleItem['equivalent_minutes'], 2),
+                    number_format($ruleItem['multiplier'], 4)
+                );
+            }
+            $lateRuleLog = !empty($lateRuleLogItems) ? implode(', ', $lateRuleLogItems) : 'none';
+
+            try {
+                logAccountActivity(
+                    $_SESSION['user_id'],
+                    $_SESSION['username'] ?? 'admin',
+                    'Updated salary rules for Shift 1 and Shift 2',
+                    'update',
+                    sprintf(
+                        'Shift 1: per-day %s, OT %s @ %s-%s | Shift 2: per-day %s, OT %s @ %s-%s | Late rules: %s',
+                        number_format($rulesToSave['shift_1']['per_day_rate'], 2),
+                        number_format($rulesToSave['shift_1']['ot_rate'], 2),
+                        $rulesToSave['shift_1']['time_in'],
+                        $rulesToSave['shift_1']['time_out'],
+                        number_format($rulesToSave['shift_2']['per_day_rate'], 2),
+                        number_format($rulesToSave['shift_2']['ot_rate'], 2),
+                        $rulesToSave['shift_2']['time_in'],
+                        $rulesToSave['shift_2']['time_out'],
+                        $lateRuleLog
+                    ),
+                    getDBConnection()
+                );
+            } catch (\Throwable $e) {
+                error_log('Salary rules log error: ' . $e->getMessage());
+            }
+
+            $legacyLateRule = null;
+            foreach ($lateRules as $ruleItem) {
+                if ($ruleItem['actual_minutes'] !== null && $ruleItem['equivalent_minutes'] !== null) {
+                    $legacyLateRule = $ruleItem;
+                    break;
+                }
+            }
+
+            echo json_encode([
+                'success' => true,
+                'message' => 'Salary rules saved successfully',
+                'rules' => $rulesToSave,
+                'late_rules' => $lateRules,
+                // Backward-compatible legacy shape for older consumers.
+                'late_rule' => $legacyLateRule,
+            ]);
             break;
 
         // =====================================================

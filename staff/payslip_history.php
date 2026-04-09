@@ -1919,6 +1919,19 @@ function formatShortDate(dateString) {
 // Generate receipt-style HTML
 function generateReceiptHTML(payslip) {
     const receiptId = `PSL-${payslip.id}-${new Date(payslip.created_at).getTime()}`;
+    const escapeHtml = (text) => String(text)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
+    let notes = {};
+    try { notes = JSON.parse(payslip.other_deductions_notes || '{}'); } catch (e) {}
+    const deductionRemarks = (notes.dtr_remarks || payslip.dtr_remarks || '').toString().trim();
+    const safeDeductionRemarks = escapeHtml(deductionRemarks);
+    const dtrOtherDeduction = parseFloat(notes.dtr_other_deduction || payslip.dtr_other_deduction || 0) || 0;
+    const storedOtherDeduction = parseFloat(payslip.other_deductions || 0) || 0;
+    const otherDeduction = storedOtherDeduction > 0 ? storedOtherDeduction : dtrOtherDeduction;
     
     return `
         <div class="receipt-payslip">
@@ -2038,10 +2051,20 @@ function generateReceiptHTML(payslip) {
                     <span class="receipt-row-label">Withholding Tax:</span>
                     <span class="receipt-row-value">₱${parseFloat(payslip.withholding_tax || 0).toFixed(2)}</span>
                 </div>
+                <div class="receipt-row">
+                    <span class="receipt-row-label">Other Deduction:</span>
+                    <span class="receipt-row-value">₱${otherDeduction.toFixed(2)}</span>
+                </div>
                 ${parseFloat(payslip.cash_advance || 0) > 0 ? `
                 <div class="receipt-row">
                     <span class="receipt-row-label">Cash Advance:</span>
                     <span class="receipt-row-value">₱${parseFloat(payslip.cash_advance || 0).toFixed(2)}</span>
+                </div>
+                ` : ''}
+                ${deductionRemarks ? `
+                <div class="receipt-row">
+                    <span class="receipt-row-label">Remarks:</span>
+                    <span class="receipt-row-value" style="max-width: 60%; text-align: right; font-size: 11px; line-height: 1.3;">${safeDeductionRemarks}</span>
                 </div>
                 ` : ''}
                 <hr class="receipt-divider">

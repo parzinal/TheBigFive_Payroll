@@ -1086,8 +1086,8 @@ function renderPayslipList(payslips, container) {
         <label style="font-size:13px;font-weight:600;color:#475569;">Cut-off:</label>
         <select id="filterCutoff" onchange="applyPayslipFilter()">
             <option value="">All</option>
-            <option value="1st">1st Cut-off (1–15)</option>
-            <option value="2nd">2nd Cut-off (16–31)</option>
+            <option value="1st">1st Cut-off (Prev 28 - Curr 12)</option>
+            <option value="2nd">2nd Cut-off (Curr 13 - 27)</option>
         </select>
         <div class="filter-divider"></div>
         <button class="btn-filter-reset" onclick="resetPayslipFilter()">
@@ -1099,13 +1099,15 @@ function renderPayslipList(payslips, container) {
     html += '<div class="payslip-list-grid" id="payslipListGrid">';
 
     payslips.forEach(payslip => {
-        // Determine cut-off from start_date day
-        const startDay   = payslip.start_date ? new Date(payslip.start_date).getDate() : 0;
-        const isFirst    = startDay <= 15;
+        const notesForCutoff = parsePayslipNotes(payslip.other_deductions_notes || '{}');
+        const cutoffTypeFromNotes = String(notesForCutoff.cutoff_type || '').trim().toLowerCase();
+        const isFirst = cutoffTypeFromNotes
+            ? cutoffTypeFromNotes === 'first'
+            : isPayrollFirstCutoffByDate(payslip.start_date);
         const cutoffLabel = isFirst ? '1st Cut-off' : '2nd Cut-off';
         const cutoffKey   = isFirst ? '1st' : '2nd';
         const badgeClass  = isFirst ? 'first' : 'second';
-        const cutoffRange = isFirst ? '1st – 15th' : '16th – 31st';
+        const cutoffRange = formatCutoffRangeFromPeriod(payslip.start_date, payslip.end_date, isFirst);
 
         // YYYY-MM for data attribute filtering
         const ym = payslip.start_date
@@ -1116,7 +1118,10 @@ function renderPayslipList(payslips, container) {
         const periodLabel = payslip.period_name || formatShortDate(payslip.start_date);
 
         // Net pay formatted
-        const netPay = parseFloat(payslip.net_pay || 0);
+        const notes = notesForCutoff;
+        const othersCa = getPayslipOthersCa(payslip, notes);
+        const governmentDeductions = getPayslipGovernmentDeductions(payslip);
+        const netPay = getPayslipDisplayNetPay(payslip, othersCa, governmentDeductions);
         const netPayFmt = '₱' + netPay.toLocaleString('en-PH', {minimumFractionDigits: 2});
 
         html += `
@@ -1234,10 +1239,81 @@ function updateFilterCount() {
 }
 // ────────────────────────────────────────────────────────────────────────────
 
+function parsePayslipNotes(rawNotes) {
+    if (!rawNotes) return {};
+    try {
+        const parsed = JSON.parse(rawNotes);
+        return parsed && typeof parsed === 'object' ? parsed : {};
+    } catch (e) {
+        return {};
+    }
+}
+
+function getPayslipOthersCa(payslip, notes = null) {
+    const parsedNotes = notes || parsePayslipNotes(payslip?.other_deductions_notes);
+    const dtrOtherDeduction = parseFloat(parsedNotes.dtr_other_deduction || payslip?.dtr_other_deduction || 0);
+    const othersCaStored = parseFloat(parsedNotes.other_deductions || 0)
+        + parseFloat(payslip?.other_deductions || 0);
+    return othersCaStored > 0 ? othersCaStored : dtrOtherDeduction;
+}
+
+function getPayslipGovernmentDeductions(payslip) {
+    const whTax = parseFloat(payslip?.withholding_tax || 0);
+    const sss = parseFloat(payslip?.sss_contribution || 0);
+    const philhealth = parseFloat(payslip?.philhealth_contribution || 0);
+    const pagibig = parseFloat(payslip?.pagibig_contribution || 0);
+    return whTax + sss + philhealth + pagibig;
+}
+
+function getPayslipDisplayNetPay(payslip, othersCa = null, governmentDeductions = null) {
+    const rawNetPay = parseFloat(payslip?.net_pay || 0);
+    const grossPay = parseFloat(payslip?.total_earnings || 0);
+    const resolvedOthersCa = othersCa === null ? getPayslipOthersCa(payslip) : othersCa;
+    const resolvedGovtDeductions = governmentDeductions === null
+        ? getPayslipGovernmentDeductions(payslip)
+        : governmentDeductions;
+
+    // Backward-compatible fallback: old cutoff rows stored net_pay without Others/C.A.
+    const looksMissingOthers = resolvedOthersCa > 0
+        && Math.abs(rawNetPay - (grossPay - resolvedGovtDeductions)) < 0.01;
+    const adjustedNetPay = looksMissingOthers ? (rawNetPay - resolvedOthersCa) : rawNetPay;
+    return adjustedNetPay < 0 ? 0 : adjustedNetPay;
+}
+
 function getCutoff(startDate) {
     if (!startDate) return '';
-    const day = new Date(startDate).getDate();
-    return day <= 15 ? '1st Cut-off' : '2nd Cut-off';
+    return isPayrollFirstCutoffByDate(startDate) ? '1st Cut-off' : '2nd Cut-off';
+}
+
+function isPayrollFirstCutoffByDate(dateValue) {
+    const raw = String(dateValue || '').trim();
+    if (!raw) return false;
+    const day = new Date(raw).getDate();
+    if (!Number.isFinite(day)) return false;
+    return day >= 28 || day <= 12;
+}
+
+function formatCutoffRangeFromPeriod(startDate, endDate, isFirstCutoff = null) {
+    const monthNames = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
+    const formatMonthDay = (dateValue) => {
+        const raw = String(dateValue || '').trim();
+        const match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+        if (!match) return '';
+        const monthIndex = Math.max(0, Math.min(11, parseInt(match[2], 10) - 1));
+        const day = parseInt(match[3], 10);
+        if (!Number.isFinite(day) || day <= 0) return '';
+        return `${monthNames[monthIndex]} ${day}`;
+    };
+
+    const startLabel = formatMonthDay(startDate);
+    const endLabel = formatMonthDay(endDate);
+    if (startLabel && endLabel) {
+        return `${startLabel} - ${endLabel}`;
+    }
+
+    if (isFirstCutoff === true) return 'Prev 28 - Curr 12';
+    if (isFirstCutoff === false) return 'Curr 13 - 27';
+    return '';
 }
 
 function formatDate(dateString) {
@@ -1254,8 +1330,7 @@ function formatShortDate(dateString) {
 // Generate TB5-style payslip HTML
 function generateReceiptHTML(payslip) {
     // Parse other_deductions_notes JSON
-    let notes = {};
-    try { notes = JSON.parse(payslip.other_deductions_notes || '{}'); } catch(e) {}
+    const notes = parsePayslipNotes(payslip.other_deductions_notes || '{}');
     const dtr = notes.dtr_data || {};
 
     // Earnings
@@ -1281,26 +1356,47 @@ function generateReceiptHTML(payslip) {
     const loan       = (parseFloat(notes.student_loan || 0)
                       + parseFloat(notes.union_fees   || 0)
                       + parseFloat(notes.pension      || 0));
-    const othersCa   = (parseFloat(notes.other_deductions || 0)
-                      + parseFloat(payslip.other_deductions || 0));
+    const othersCa = getPayslipOthersCa(payslip, notes);
+    const remarksFromNotes = Array.isArray(notes.dtr_remarks_list) ? notes.dtr_remarks_list : [];
+    const remarksFromPayslip = Array.isArray(payslip.dtr_remarks_list) ? payslip.dtr_remarks_list : [];
+    const rawRemarksList = remarksFromNotes.length > 0 ? remarksFromNotes : remarksFromPayslip;
+    const deductionRemarksList = rawRemarksList
+        .map(item => String(item).trim())
+        .filter(item => item !== '');
+    if (deductionRemarksList.length === 0) {
+        const singleRemark = (notes.dtr_remarks || payslip.dtr_remarks || '').toString().trim();
+        if (singleRemark) deductionRemarksList.push(singleRemark);
+    }
 
     const grossPay             = parseFloat(payslip.total_earnings || 0);
-    const governmentDeductions = whTax + sss + philhealth + pagibig;
-    const netPay      = parseFloat(payslip.net_pay           || 0);
+    const governmentDeductions = getPayslipGovernmentDeductions(payslip);
+    const netPay      = getPayslipDisplayNetPay(payslip, othersCa, governmentDeductions);
     const otMinutes   = Math.round(otHours * 60);
 
     // Cut-off helpers
-    const startDay    = payslip.start_date ? new Date(payslip.start_date).getDate() : 0;
-    const isFirstCut  = startDay <= 15;
-    const cutoffStr   = isFirstCut ? '1st CUT OFF (1st - 15th)' : '2nd CUT OFF (16th / 31st)';
+    const cutoffTypeFromNotes = String(notes.cutoff_type || '').trim().toLowerCase();
+    const isFirstCut = cutoffTypeFromNotes
+        ? cutoffTypeFromNotes === 'first'
+        : isPayrollFirstCutoffByDate(payslip.start_date);
+    const cutoffRange = formatCutoffRangeFromPeriod(payslip.start_date, payslip.end_date, isFirstCut);
+    const cutoffStr   = `${isFirstCut ? '1st CUT OFF' : '2nd CUT OFF'} (${cutoffRange})`;
     const cutoffClass = isFirstCut ? 'tb5-pill-amber' : 'tb5-pill-rose';
     const payDateFmt  = payslip.pay_date
         ? new Date(payslip.pay_date).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'})
         : new Date(payslip.created_at).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
 
     const fmt = v => parseFloat(v).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+    const escapeHtml = txt => String(txt)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     const amtCell = v => v > 0 ? `<span style="font-weight:700;color:#0f3460;">P ${fmt(v)}</span>` : `<span style="color:#94a3b8;">&mdash;</span>`;
     const dedCell = v => v > 0 ? `<span style="font-weight:700;color:#dc2626;">P ${fmt(v)}</span>` : `<span style="color:#94a3b8;">&mdash;</span>`;
+    const remarksCell = items => (Array.isArray(items) && items.length > 0)
+        ? `<span style="display:inline-block;max-width:170px;text-align:right;color:#475569;font-size:7pt;line-height:1.2;white-space:normal;">${items.map(item => `&#8226; ${escapeHtml(item)}`).join('<br>')}</span>`
+        : `<span style="color:#94a3b8;">&mdash;</span>`;
 
     return `
     <style>
@@ -1434,6 +1530,7 @@ function generateReceiptHTML(payslip) {
           <tr class="tb5-dr"><td class="tb5-rl">Halfday Deduct</td> <td style="text-align:right;">${dedCell(halfdayDeduct)}</td></tr>
           <tr class="tb5-dr"><td class="tb5-rl">Loan</td>           <td style="text-align:right;">${dedCell(loan)}</td></tr>
           <tr class="tb5-dr"><td class="tb5-rl">Others / C.A.</td>  <td style="text-align:right;">${dedCell(othersCa)}</td></tr>
+                                        ${deductionRemarksList.length > 0 ? `<tr class="tb5-dr"><td class="tb5-rl">Remarks</td><td style="text-align:right;">${remarksCell(deductionRemarksList)}</td></tr>` : ''}
         </table>
       </td>
 

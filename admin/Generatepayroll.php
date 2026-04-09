@@ -243,14 +243,14 @@ $payroll_periods = $stmt->fetchAll();
                                 </select>
                                 <select id="payroll_cutoff" class="form-control" onchange="updatePayrollPeriod()">
                                     <option value="">Cut-off</option>
-                                    <option value="12">1st Cut-off (1–15)</option>
-                                    <option value="27">2nd Cut-off (16–31)</option>
+                                    <option value="12">1st Cut-off (28-12)</option>
+                                    <option value="27">2nd Cut-off (13-27)</option>
                                 </select>
                             </div>
                             <input type="hidden" id="calculated_start_date" name="period_start_date">
                             <input type="hidden" id="calculated_end_date" name="period_end_date">
                             <input type="hidden" id="calculated_pay_date" name="calculated_pay_date">
-                            <small style="display: block; margin-top: 5px; color: #666;">Select year, month, and cut-off (1st: 1–15, 2nd: 16–last day)</small>
+                            <small style="display: block; margin-top: 5px; color: #666;">Select year, month, and cut-off (1st: previous month 28 to current month 12, 2nd: 13-27)</small>
                         </div>
                     </div>
                 </div>
@@ -347,35 +347,19 @@ $payroll_periods = $stmt->fetchAll();
                                     <div class="rate-input-wrapper">
                                         <span class="peso-sign">₱</span>
                                         <input type="number" id="ot_rate" name="ot_rate_value" 
-                                               class="rate-input" value="" step="0.01" 
+                                               class="rate-input" value="0.00" step="0.01" 
                                                oninput="updateOTRate()">
                                     </div>
                                 </div>
-                                <div class="tb5-rate-item">
-                                    <span class="tb5-rate-label">TIME START</span>
-                                    <input type="text" id="late_threshold" name="late_threshold" value="8:00" class="time-input time24" autocomplete="off" placeholder="8:00" maxlength="5" oninput="formatTime24(this)" onchange="recalculateAllRows()">
-                                </div>
-                                <div class="tb5-rate-item">
-                                    <span class="tb5-rate-label">END TIME</span>
-                                    <input type="text" id="end_threshold" name="end_threshold" value="17:00" class="time-input time24" autocomplete="off" placeholder="17:00" maxlength="5" oninput="formatTime24(this)" onchange="recalculateAllRows()">
-                                </div>
-                                <div class="tb5-rate-item tb5-switch-item">
-                                    <span class="tb5-rate-label">DAY OVR EDIT</span>
-                                    <div class="segment-switch-wrap" title="Edit Per/Day, Time Start, and End Time for checked DAY OVR rows">
-                                        <input type="checkbox" id="checked_days_mode_switch" class="simple-switch-input" hidden>
-                                        <div class="segment-switch-track" role="group" aria-label="Toggle checked days edit mode">
-                                            <button type="button" id="checked_days_default_btn" class="segment-option segment-btn active" onclick="setCheckedDaysMode(false)">Default</button>
-                                            <button type="button" id="checked_days_checked_btn" class="segment-option segment-btn" onclick="setCheckedDaysMode(true)">Checked</button>
-                                        </div>
-                                    </div>
-                                </div>
+                                <input type="hidden" id="late_threshold" name="late_threshold" value="08:00">
+                                <input type="hidden" id="end_threshold" name="end_threshold" value="17:00">
                             </div>
 
                         <div class="dtr-table-wrapper">
                             <table class="dtr-table" id="main_dtr_table">
                                 <thead>
                                     <tr>
-                                        <th rowspan="3" class="th-single th-day-override">DAY<br>OVR</th>
+                                        <th rowspan="3" class="th-single th-day-override">Shift</th>
                                         <th rowspan="3" class="th-date">MO/YR<br>DATE</th>
                                         <th rowspan="3" class="th-group th-am">AM IN</th>
                                         <th rowspan="3" class="th-group th-pm">PM OUT</th>
@@ -3205,6 +3189,10 @@ input.time24:focus {
     animation: timePulse 2s ease-in-out infinite;
 }
 
+.shift-rule-select {
+    width: 110px;
+}
+
 /* Day OVR segmented switch (inline so it always applies on this page) */
 .tb5-switch-item {
     min-width: 182px;
@@ -4418,6 +4406,228 @@ const LS_KEY_TABS = 'dtr_employee_tabs';
 const LS_KEY_ACTIVE = 'dtr_active_tab';
 const LS_KEY_COUNTER = 'dtr_tab_counter';
 
+const DEFAULT_SALARY_RULES = {
+    shift_1: {
+        shift_code: 'shift_1',
+        shift_name: 'Shift 1',
+        per_day_rate: 0,
+        ot_rate: 0,
+        time_in: '08:00',
+        time_out: '17:00'
+    },
+    shift_2: {
+        shift_code: 'shift_2',
+        shift_name: 'Shift 2',
+        per_day_rate: 0,
+        ot_rate: 0,
+        time_in: '08:00',
+        time_out: '17:00'
+    }
+};
+
+const DEFAULT_LATE_EQUIVALENCY_RULES = [];
+
+let salaryRulesConfig = JSON.parse(JSON.stringify(DEFAULT_SALARY_RULES));
+let salaryLateRulesConfig = JSON.parse(JSON.stringify(DEFAULT_LATE_EQUIVALENCY_RULES));
+let salaryRulesLoaded = false;
+let userEditedShiftFields = false;
+let isApplyingShiftRule = false;
+
+function cloneDefaultSalaryRules() {
+    return JSON.parse(JSON.stringify(DEFAULT_SALARY_RULES));
+}
+
+function getManualOtRateOrZero() {
+    const raw = String(document.getElementById('ot_rate')?.value || '').trim();
+    const parsed = parseFloat(raw);
+    return (isFinite(parsed) && parsed > 0) ? parsed : 0;
+}
+
+function normalizeRuleTimeForInput(value, fallback) {
+    const raw = String(value || '').trim();
+    const match = raw.match(/^(\d{1,2}):(\d{2})/);
+    if (!match) return fallback;
+    const h = parseInt(match[1], 10);
+    const m = parseInt(match[2], 10);
+    if (isNaN(h) || isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) {
+        return fallback;
+    }
+    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+}
+
+function normalizeRuleRate(value) {
+    const rate = parseFloat(value);
+    if (!isFinite(rate) || rate < 0) return 0;
+    return parseFloat(rate.toFixed(2));
+}
+
+function cloneDefaultLateEquivalencyRules() {
+    return JSON.parse(JSON.stringify(DEFAULT_LATE_EQUIVALENCY_RULES));
+}
+
+function normalizeLateEquivalencyRules(rawRules, legacyRule = null) {
+    let source = [];
+    if (Array.isArray(rawRules)) {
+        source = rawRules;
+    } else if (rawRules && typeof rawRules === 'object') {
+        source = [rawRules];
+    }
+
+    if (source.length === 0 && legacyRule && typeof legacyRule === 'object') {
+        source = [legacyRule];
+    }
+
+    return source
+        .map(item => {
+            const actualRaw = parseFloat(item?.actual_minutes);
+            const equivalentRaw = parseFloat(item?.equivalent_minutes);
+            const actualMinutes = (isFinite(actualRaw) && actualRaw > 0) ? Number(actualRaw.toFixed(2)) : null;
+            const equivalentMinutes = (isFinite(equivalentRaw) && equivalentRaw > 0) ? Number(equivalentRaw.toFixed(2)) : null;
+            if (actualMinutes === null || equivalentMinutes === null) {
+                return null;
+            }
+            const multiplier = equivalentMinutes / Math.max(0.01, actualMinutes);
+            return {
+                actual_minutes: actualMinutes,
+                equivalent_minutes: equivalentMinutes,
+                multiplier: Number(multiplier.toFixed(4))
+            };
+        })
+        .filter(Boolean)
+        .sort((a, b) => a.actual_minutes - b.actual_minutes)
+        .slice(0, 3);
+}
+
+function getEquivalentLateMinutes(lateMinutes) {
+    const mins = parseFloat(lateMinutes);
+    if (!isFinite(mins) || mins <= 0) return 0;
+    let multiplier = 1;
+    salaryLateRulesConfig.forEach(rule => {
+        if (mins >= rule.actual_minutes) {
+            multiplier = rule.multiplier;
+        }
+    });
+    return mins * multiplier;
+}
+
+function getSelectedShiftRuleCode() {
+    const select = document.getElementById('shift_rule_select');
+    if (!select) return 'shift_1';
+    return select.value === 'shift_2' ? 'shift_2' : 'shift_1';
+}
+
+function mergeSalaryRules(rawRules) {
+    const merged = cloneDefaultSalaryRules();
+    ['shift_1', 'shift_2'].forEach(code => {
+        const incoming = rawRules && rawRules[code] ? rawRules[code] : {};
+        merged[code] = {
+            shift_code: code,
+            shift_name: String(incoming.shift_name || merged[code].shift_name),
+            per_day_rate: normalizeRuleRate(incoming.per_day_rate),
+            ot_rate: normalizeRuleRate(incoming.ot_rate),
+            time_in: normalizeRuleTimeForInput(incoming.time_in, merged[code].time_in),
+            time_out: normalizeRuleTimeForInput(incoming.time_out, merged[code].time_out)
+        };
+    });
+    return merged;
+}
+
+function updateShiftRuleSelectLabels() {
+    const select = document.getElementById('shift_rule_select');
+    if (!select) return;
+    const shift1 = select.querySelector('option[value="shift_1"]');
+    const shift2 = select.querySelector('option[value="shift_2"]');
+    if (shift1) shift1.textContent = salaryRulesConfig.shift_1.shift_name || 'Shift 1';
+    if (shift2) shift2.textContent = salaryRulesConfig.shift_2.shift_name || 'Shift 2';
+}
+
+function loadSalaryRulesForPayroll(force = false) {
+    if (salaryRulesLoaded && !force) {
+        return Promise.resolve(salaryRulesConfig);
+    }
+
+    return fetch('backup_api.php?action=get_salary_rules')
+        .then(response => response.json())
+        .then(data => {
+            if (data && data.success) {
+                salaryRulesConfig = mergeSalaryRules(data.rules || {});
+                salaryLateRulesConfig = normalizeLateEquivalencyRules(data.late_rules || [], data.late_rule || null);
+                salaryRulesLoaded = true;
+                updateShiftRuleSelectLabels();
+                applySalaryRuleToHeader(getSelectedShiftRuleCode(), true);
+            }
+            return salaryRulesConfig;
+        })
+        .catch(error => {
+            console.error('Failed to load salary rules:', error);
+            salaryRulesConfig = cloneDefaultSalaryRules();
+            salaryLateRulesConfig = cloneDefaultLateEquivalencyRules();
+            updateShiftRuleSelectLabels();
+            return salaryRulesConfig;
+        });
+}
+
+function applySalaryRuleToHeader(shiftCode, force = false) {
+    const normalizedCode = shiftCode === 'shift_2' ? 'shift_2' : 'shift_1';
+    const select = document.getElementById('shift_rule_select');
+    if (select) {
+        select.value = normalizedCode;
+    }
+
+    if (!force && userEditedShiftFields) {
+        return;
+    }
+
+    const rule = salaryRulesConfig[normalizedCode] || DEFAULT_SALARY_RULES.shift_1;
+    const dailyRateInput = document.getElementById('daily_rate');
+    const otRateInput = document.getElementById('ot_rate');
+    const lateThresholdInput = document.getElementById('late_threshold');
+    const endThresholdInput = document.getElementById('end_threshold');
+    const rulePerDayRate = normalizeRuleRate(rule.per_day_rate);
+    const ruleOtRate = normalizeRuleRate(rule.ot_rate);
+
+    isApplyingShiftRule = true;
+    try {
+        if (dailyRateInput && rulePerDayRate > 0) {
+            dailyRateInput.value = rulePerDayRate.toFixed(2);
+        }
+        if (otRateInput) {
+            otRateInput.value = ruleOtRate.toFixed(2);
+        }
+        if (lateThresholdInput) {
+            lateThresholdInput.value = normalizeRuleTimeForInput(rule.time_in, '08:00');
+        }
+        if (endThresholdInput) {
+            endThresholdInput.value = normalizeRuleTimeForInput(rule.time_out, '17:00');
+        }
+    } finally {
+        isApplyingShiftRule = false;
+    }
+
+    userEditedShiftFields = false;
+    updateRatesFromDaily();
+    recalculateAllRows();
+}
+
+function onShiftRuleChange(shiftCode) {
+    applySalaryRuleToHeader(shiftCode, true);
+}
+
+function markShiftFieldsEdited() {
+    if (isApplyingShiftRule) return;
+    userEditedShiftFields = true;
+}
+
+function bindShiftFieldEditTracking() {
+    ['daily_rate', 'late_threshold', 'end_threshold'].forEach(id => {
+        const el = document.getElementById(id);
+        if (!el || el.dataset.shiftEditBound === '1') return;
+        el.addEventListener('input', markShiftFieldsEdited);
+        el.addEventListener('change', markShiftFieldsEdited);
+        el.dataset.shiftEditBound = '1';
+    });
+}
+
 /**
  * Save all employee tab data to localStorage
  */
@@ -5098,7 +5308,7 @@ function saveSingleTabToDatabase(tabId) {
                 half_out:       row.querySelector(`input[name="halfday_out_${rowNum}"]`)?.value  || '',
                 is_halfday:     halfdayDeduct > 0 ? 1 : 0,
                 total_work_hours: parseFloat(row.querySelector(`input[name="work_hours_${rowNum}"]`)?.value) || 0,
-                late_minutes:   parseFloat(row.querySelector(`input[name="late_mins_${rowNum}"]`)?.value)    || 0,
+                late_minutes:   parseFloat(row.querySelector(`input[name="actual_late_mins_${rowNum}"]`)?.value) || (parseFloat(row.querySelector(`input[name="late_mins_${rowNum}"]`)?.value) || 0),
                 undertime_hours:parseFloat(row.querySelector(`input[name="undertime_${rowNum}"]`)?.value)    || 0,
                 daily_ot_hours: parseFloat(row.querySelector(`input[name="ot_hours_${rowNum}"]`)?.value)     || 0,
                 absent_deduct:  parseFloat(row.querySelector(`input[name="absent_deduct_${rowNum}"]`)?.value)|| 0,
@@ -5165,11 +5375,11 @@ function saveSingleTabToDatabase(tabId) {
         // Also send per_hour_rate, per_minute_rate, and ot_rate
         const hourlyRateValue = document.getElementById('hourly_rate_value')?.value || (perDayRate / 8);
         const minuteRateValue = document.getElementById('minute_rate_value')?.value || (hourlyRateValue / 60);
-        const otRateValue = document.getElementById('ot_rate')?.value || (hourlyRateValue * 1.25);
+        const otRateValue = getManualOtRateOrZero();
         
         formData.append('per_hour_rate', parseFloat(hourlyRateValue));
         formData.append('per_minute_rate', parseFloat(minuteRateValue));
-        formData.append('ot_rate', parseFloat(otRateValue));
+        formData.append('ot_rate', otRateValue);
         
         formData.append('period_start',     periodStart);
         formData.append('period_end',       periodEnd);
@@ -5193,6 +5403,7 @@ function saveSingleTabToDatabase(tabId) {
         formData.append('total_govt_deductions', totalGovtDeduct);
         formData.append('late_threshold', document.getElementById('late_threshold')?.value || '8:00');
         formData.append('end_threshold', document.getElementById('end_threshold')?.value || '17:00');
+        formData.append('shift_rule_code', getSelectedShiftRuleCode());
         // Send classification from the tab (normalize server-side)
         formData.append('classification', tab.classification || currentEmployeeClassification || '');
         formData.append('dtr_records',  JSON.stringify(dtrRecords));
@@ -5790,10 +6001,7 @@ function getCheckedDayOverrideRows() {
 }
 
 function buildDayOverrideMetaForSave() {
-    const defaultSnapshot = window.checkedDaysDefaultSnapshot || getCurrentCheckedDaysValues();
-    const checkedSnapshot = window.checkedDaysOverrideSnapshot || defaultSnapshot;
     const checkedRows = [];
-    const rowValues = {};
 
     document.querySelectorAll('.dtr-day-override-toggle').forEach(toggle => {
         const rowNum = String(toggle.getAttribute('data-row') || '');
@@ -5804,29 +6012,27 @@ function buildDayOverrideMetaForSave() {
         if (!rowDate) return;
 
         checkedRows.push(rowDate);
-        if (window.dayOverrideValues && window.dayOverrideValues[rowNum]) {
-            rowValues[rowDate] = {
-                perDay: String(window.dayOverrideValues[rowNum].dailyRate || checkedSnapshot.dailyRate || ''),
-                lateStart: String(window.dayOverrideValues[rowNum].lateThreshold || checkedSnapshot.lateThreshold || '8:00'),
-                endTime: String(window.dayOverrideValues[rowNum].endThreshold || checkedSnapshot.endThreshold || '17:00')
-            };
-        }
     });
 
+    const shift1 = salaryRulesConfig?.shift_1 || DEFAULT_SALARY_RULES.shift_1;
+    const shift2 = salaryRulesConfig?.shift_2 || DEFAULT_SALARY_RULES.shift_2;
+
     return {
-        version: 1,
-        default_values: {
-            perDay: String(defaultSnapshot.dailyRate || ''),
-            lateStart: String(defaultSnapshot.lateThreshold || '8:00'),
-            endTime: String(defaultSnapshot.endThreshold || '17:00')
+        version: 2,
+        mode: 'shift_day_override',
+        shift_1: {
+            perDay: String(normalizeRuleRate(shift1.per_day_rate || 0)),
+            otRate: String(normalizeRuleRate(shift1.ot_rate || 0)),
+            lateStart: String(normalizeRuleTimeForInput(shift1.time_in, '08:00')),
+            endTime: String(normalizeRuleTimeForInput(shift1.time_out, '17:00'))
         },
-        checked_values: {
-            perDay: String(checkedSnapshot.dailyRate || defaultSnapshot.dailyRate || ''),
-            lateStart: String(checkedSnapshot.lateThreshold || defaultSnapshot.lateThreshold || '8:00'),
-            endTime: String(checkedSnapshot.endThreshold || defaultSnapshot.endThreshold || '17:00')
+        shift_2: {
+            perDay: String(normalizeRuleRate(shift2.per_day_rate || 0)),
+            otRate: String(normalizeRuleRate(shift2.ot_rate || 0)),
+            lateStart: String(normalizeRuleTimeForInput(shift2.time_in, '08:00')),
+            endTime: String(normalizeRuleTimeForInput(shift2.time_out, '17:00'))
         },
-        checked_rows: checkedRows,
-        row_values: rowValues
+        shift_2_rows: checkedRows
     };
 }
 
@@ -5840,15 +6046,8 @@ function setCheckedDaysModeLabel(enabled) {
 }
 
 function setCheckedDaysMode(enabled) {
-    const switchInput = document.getElementById('checked_days_mode_switch');
-    if (!switchInput) return;
-    if (!!switchInput.checked === !!enabled) {
-        setCheckedDaysModeLabel(!!enabled);
-        updateCheckedDaysVisuals();
-        return;
-    }
-    switchInput.checked = !!enabled;
-    toggleCheckedDaysMode(switchInput);
+    window.checkedDaysEditMode = false;
+    updateCheckedDaysVisuals();
 }
 
 function setCheckedDaysFieldsVisualState(enabled) {
@@ -5875,14 +6074,13 @@ function setCheckedDaysFieldsVisualState(enabled) {
 }
 
 function updateCheckedDaysVisuals() {
-    const isEnabled = !!window.checkedDaysEditMode;
     document.querySelectorAll('#dtr_rows tr').forEach(row => {
         const rowNum = row.getAttribute('data-row');
         const toggle = rowNum ? document.querySelector(`input[name="day_override_enabled_${rowNum}"]`) : null;
-        const isTarget = isEnabled && toggle && toggle.checked && !toggle.disabled;
+        const isTarget = !!(toggle && toggle.checked && !toggle.disabled);
         row.classList.toggle('checked-days-target-row', !!isTarget);
     });
-    setCheckedDaysFieldsVisualState(isEnabled);
+    setCheckedDaysFieldsVisualState(false);
 }
 
 function loadCheckedDaysValuesIntoHeader(values) {
@@ -5915,46 +6113,11 @@ function applyCheckedDaysHeaderValuesToRows() {
 }
 
 function toggleCheckedDaysMode(toggleEl) {
-    const wasEnabled = !!window.checkedDaysEditMode;
-    const isEnabled = !!(toggleEl && toggleEl.checked);
-
-    // Ignore redundant toggles to avoid overwriting saved snapshots.
-    if (wasEnabled === isEnabled) {
-        setCheckedDaysModeLabel(isEnabled);
-        updateCheckedDaysVisuals();
-        return;
+    if (toggleEl) {
+        toggleEl.checked = false;
     }
-
-    // Persist values for the mode we are leaving.
-    syncCurrentModeSnapshotFromHeader();
-
-    // First-time initialization only; do not overwrite once set.
-    if (!window.checkedDaysDefaultSnapshot) {
-        window.checkedDaysDefaultSnapshot = getCurrentCheckedDaysValues();
-    }
-    if (!window.checkedDaysOverrideSnapshot) {
-        window.checkedDaysOverrideSnapshot = getCurrentCheckedDaysValues();
-    }
-
-    window.isSwitchingCheckedMode = true;
-
-    window.checkedDaysEditMode = isEnabled;
-
-    if (isEnabled) {
-        deactivateDayOverrideContext();
-        loadCheckedDaysValuesIntoHeader(window.checkedDaysOverrideSnapshot);
-        setCheckedDaysModeLabel(true);
-        // Recompute header computed rates (PER/HOUR, PER/MIN) and propagate checked values to checked rows.
-        updateRatesFromDaily();
-        window.isSwitchingCheckedMode = false;
-        return;
-    }
-
-    loadCheckedDaysValuesIntoHeader(window.checkedDaysDefaultSnapshot);
-    setCheckedDaysModeLabel(false);
+    window.checkedDaysEditMode = false;
     updateCheckedDaysVisuals();
-    updateRatesFromDaily();
-    window.isSwitchingCheckedMode = false;
 }
 
 function getCurrentHeaderRateValues() {
@@ -6116,34 +6279,6 @@ function handleDayOverrideToggle() {
     const rowNum = this.getAttribute('data-row');
     const isEnabled = this.checked;
 
-    if (window.checkedDaysEditMode) {
-        if (isEnabled) {
-            const existing = window.dayOverrideValues[rowNum] || {};
-            const checkedValues = window.checkedDaysOverrideSnapshot || getCurrentCheckedDaysValues();
-            window.dayOverrideValues[rowNum] = {
-                ...existing,
-                dailyRate: checkedValues.dailyRate,
-                lateThreshold: checkedValues.lateThreshold,
-                endThreshold: checkedValues.endThreshold
-            };
-        }
-        applyDayOverrideState(rowNum, isEnabled);
-        updateCheckedDaysVisuals();
-        calculateRowDTR(rowNum);
-        calculateTotals();
-        return;
-    }
-
-    if (isEnabled) {
-        // When enabling DAY OVR in default view, initialize from checked snapshot
-        // but do not overwrite existing manually edited row values.
-        if (!window.dayOverrideValues[rowNum]) {
-            seedDayOverrideValues(rowNum);
-        }
-    } else if (String(window.activeDayOverrideRow) === String(rowNum)) {
-        deactivateDayOverrideContext();
-    }
-
     applyDayOverrideState(rowNum, isEnabled);
     updateCheckedDaysVisuals();
     calculateRowDTR(rowNum);
@@ -6189,7 +6324,7 @@ function addDTRRow(rowNum = null, dateStr = null, skipUpdateCalls = false) {
     const _remarkVal = rowNum === 1 ? 'SSS' : rowNum === 2 ? 'PHILHEALTH' : rowNum === 3 ? 'PAGIBIG' : '';
     row.innerHTML = `
         <td class="centered day-override-cell">
-            <input type="checkbox" name="day_override_enabled_${rowNum}" data-row="${rowNum}" class="dtr-day-override-toggle" title="Enable per-day rate/time override">
+            <input type="checkbox" name="day_override_enabled_${rowNum}" data-row="${rowNum}" class="dtr-day-override-toggle" title="Use Shift 2 rules for this day (unchecked uses Shift 1)">
         </td>
         <td class="date-cell">
             <input type="hidden" name="dtr_date_${rowNum}" data-row="${rowNum}" value="${dateStr || ''}">
@@ -6201,7 +6336,7 @@ function addDTRRow(rowNum = null, dateStr = null, skipUpdateCalls = false) {
         <td class="centered"><input type="checkbox" name="training_${rowNum}" data-row="${rowNum}" class="dtr-training"></td>
         <td><input type="text" name="ot_out_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="18:00" maxlength="5" oninput="formatTime24(this)"></td>
         <td><input type="number" name="work_hours_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="0" step="1" title="Total work minutes"></td>
-        <td><input type="number" name="late_mins_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="0.00" step="0.01" title="Late hours"></td>
+        <td><input type="number" name="late_mins_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="0.00" step="0.01" title="Late minutes (equivalent)"><input type="hidden" name="actual_late_mins_${rowNum}" data-row="${rowNum}" value="0.00"></td>
         <td><input type="number" name="undertime_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="0.00" step="0.01" title="Undertime hours"></td>
         <td><input type="number" name="ot_hours_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="0.00" step="0.01" title="OT hours"></td>
         <td><input type="number" name="absent_day_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="0" step="0.5" title="Absent days"></td>
@@ -6543,89 +6678,22 @@ function calculateRowDTR(rowNum) {
     const isAbsent = document.querySelector(`input[name="absent_${rowNum}"]`)?.checked || false;
     const isDayOverride = document.querySelector(`input[name="day_override_enabled_${rowNum}"]`)?.checked || false;
 
-    let effectiveDailyRate = dailyRate;
-    let effectiveOtRate = otRate;
-    let effectiveLateThreshold = document.getElementById('late_threshold')?.value || '8:00';
-    let effectiveEndThreshold = document.getElementById('end_threshold')?.value || '17:00';
+    const headerDailyRate = parseFormattedNumber(document.getElementById('daily_rate')?.value) || dailyRate;
+    const headerLateThreshold = document.getElementById('late_threshold')?.value || '8:00';
+    const headerEndThreshold = document.getElementById('end_threshold')?.value || '17:00';
 
-    // In normal mode, unchecked rows should follow saved DEFAULT values,
-    // not whatever header is currently showing for an override row.
-    if (!window.checkedDaysEditMode && !isDayOverride) {
-        const defaultValues = window.checkedDaysDefaultSnapshot || {};
-        const defaultDaily = parseFormattedNumber(defaultValues.dailyRate || '0');
-        if (defaultDaily > 0) {
-            effectiveDailyRate = defaultDaily;
-        }
-        if (parseTimeToMinutes(defaultValues.lateThreshold || '') !== null) {
-            effectiveLateThreshold = defaultValues.lateThreshold;
-        }
-        if (parseTimeToMinutes(defaultValues.endThreshold || '') !== null) {
-            effectiveEndThreshold = defaultValues.endThreshold;
-        }
-    }
+    const shift1Rule = salaryRulesConfig?.shift_1 || DEFAULT_SALARY_RULES.shift_1;
+    const shift2Rule = salaryRulesConfig?.shift_2 || DEFAULT_SALARY_RULES.shift_2;
+    const activeRule = isDayOverride ? shift2Rule : shift1Rule;
 
-    // In checked-days edit mode, unchecked rows must keep DEFAULT values,
-    // while checked rows use CHECKED override values.
-    if (window.checkedDaysEditMode) {
-        const defaultValues = window.checkedDaysDefaultSnapshot || {};
-        const checkedValues = window.checkedDaysOverrideSnapshot || {};
+    let effectiveDailyRate = headerDailyRate;
+    let effectiveOtRate = normalizeRuleRate(activeRule.ot_rate || 0);
+    let effectiveLateThreshold = normalizeRuleTimeForInput(activeRule.time_in, headerLateThreshold);
+    let effectiveEndThreshold = normalizeRuleTimeForInput(activeRule.time_out, headerEndThreshold);
 
-        if (!isDayOverride) {
-            const defaultDaily = parseFormattedNumber(defaultValues.dailyRate || '0');
-            if (defaultDaily > 0) {
-                effectiveDailyRate = defaultDaily;  
-            }
-            if (parseTimeToMinutes(defaultValues.lateThreshold || '') !== null) {
-                effectiveLateThreshold = defaultValues.lateThreshold;
-            }
-            if (parseTimeToMinutes(defaultValues.endThreshold || '') !== null) {
-                effectiveEndThreshold = defaultValues.endThreshold;
-            }
-        } else {
-            const checkedDaily = parseFormattedNumber(checkedValues.dailyRate || '0');
-            if (checkedDaily > 0) {
-                effectiveDailyRate = checkedDaily;
-            }
-            if (parseTimeToMinutes(checkedValues.lateThreshold || '') !== null) {
-                effectiveLateThreshold = checkedValues.lateThreshold;
-            }
-            if (parseTimeToMinutes(checkedValues.endThreshold || '') !== null) {
-                effectiveEndThreshold = checkedValues.endThreshold;
-            }
-        }
-    }
-
-    if (isDayOverride) {
-        let rowOverride = window.dayOverrideValues[rowNum] || {};
-
-        // In Checked mode, computation should follow the currently visible Checked header values.
-        // This prevents stale per-row snapshots (e.g. old 8:00/17:00) from overriding 7:30/16:30.
-        if (window.checkedDaysEditMode) {
-            rowOverride = {
-                ...rowOverride,
-                dailyRate: document.getElementById('daily_rate')?.value || rowOverride.dailyRate || '',
-                lateThreshold: document.getElementById('late_threshold')?.value || rowOverride.lateThreshold || '8:00',
-                endThreshold: document.getElementById('end_threshold')?.value || rowOverride.endThreshold || '17:00'
-            };
-            window.dayOverrideValues[rowNum] = rowOverride;
-        }
-
-        const overrideBasic = parseFormattedNumber(rowOverride.basicSalary || '0');
-        const overrideDaily = parseFormattedNumber(rowOverride.dailyRate || '0');
-        const overrideLate = rowOverride.lateThreshold || '';
-        const overrideEnd = rowOverride.endThreshold || '';
-
-        if (overrideDaily > 0) {
-            effectiveDailyRate = overrideDaily;
-        } else if (overrideBasic > 0) {
-            effectiveDailyRate = overrideBasic / 26;
-        }
-        if (parseTimeToMinutes(overrideLate) !== null) {
-            effectiveLateThreshold = overrideLate;
-        }
-        if (parseTimeToMinutes(overrideEnd) !== null) {
-            effectiveEndThreshold = overrideEnd;
-        }
+    const configuredPerDay = normalizeRuleRate(activeRule.per_day_rate || 0);
+    if (configuredPerDay > 0) {
+        effectiveDailyRate = configuredPerDay;
     }
 
     dailyRate = effectiveDailyRate;
@@ -6675,7 +6743,8 @@ function calculateRowDTR(rowNum) {
     }
     
     // Calculate deductions and payments (TB5 format)
-    const lateDeduct = lateMinutes * perMin;  // TB5: LATE/MIN DEDUCT = late mins * per min rate
+    const equivalentLateMinutes = getEquivalentLateMinutes(lateMinutes);
+    const lateDeduct = equivalentLateMinutes * perMin;  // LATE deduction follows configured late equivalency rule
     const undertimeDeduct = undertimeHours * hourlyRate;
     const otPay = otHours * otRate;
     
@@ -6684,7 +6753,9 @@ function calculateRowDTR(rowNum) {
     // Late in MINUTES (matching DB field late_minutes & professor's Excel)
     
     document.querySelector(`input[name="work_hours_${rowNum}"]`).value = workHours.toFixed(2); // Store as HOURS
-    document.querySelector(`input[name="late_mins_${rowNum}"]`).value = Math.round(lateMinutes); // Store as MINUTES
+    document.querySelector(`input[name="late_mins_${rowNum}"]`).value = equivalentLateMinutes.toFixed(2); // Display converted late MINUTES
+    const actualLateMinsInput = document.querySelector(`input[name="actual_late_mins_${rowNum}"]`);
+    if (actualLateMinsInput) actualLateMinsInput.value = lateMinutes.toFixed(2); // Keep actual late MINUTES from time-in/grace
     document.querySelector(`input[name="undertime_${rowNum}"]`).value = undertimeHours.toFixed(2);
     document.querySelector(`input[name="ot_hours_${rowNum}"]`).value = otHours.toFixed(2);
     document.querySelector(`input[name="absent_day_${rowNum}"]`).value = absentDay;
@@ -6707,7 +6778,7 @@ function calculateRowDTR(rowNum) {
     
     // New automatic calculations columns
     const lateMinCalcInput = document.querySelector(`input[name="late_min_calc_${rowNum}"]`);
-    if (lateMinCalcInput) lateMinCalcInput.value = lateMinutes.toFixed(2);
+    if (lateMinCalcInput) lateMinCalcInput.value = equivalentLateMinutes.toFixed(2);
     
     const undertimeCalcInput = document.querySelector(`input[name="undertime_calc_${rowNum}"]`);
     if (undertimeCalcInput) undertimeCalcInput.value = undertimeHours.toFixed(2);
@@ -7185,11 +7256,6 @@ function handleManualInputChange() {
 }
 
 function handleRateChange() {
-    if (window.checkedDaysEditMode && this && this.id === 'daily_rate') {
-        applyCheckedDaysHeaderValuesToRows();
-        return;
-    }
-
     document.querySelectorAll('#dtr_rows tr').forEach(row => {
         const rowNum = row.getAttribute('data-row');
         calculateRowDTR(rowNum);
@@ -7919,7 +7985,7 @@ document.getElementById('employee_select').addEventListener('change', function()
             } else {
                 // For regular employees, use data from database
                 if (data.per_hour_rate) document.getElementById('hourly_rate').value = data.per_hour_rate;
-                if (data.overtime_rate) document.getElementById('ot_rate').value = data.overtime_rate;
+                document.getElementById('ot_rate').value = data.overtime_rate ? data.overtime_rate : '0.00';
                 if (data.per_day_rate) document.getElementById('daily_rate').value = data.per_day_rate;
             }
             
@@ -7968,6 +8034,8 @@ document.getElementById('employee_select').addEventListener('change', function()
                 console.log('Generating 31 default DTR rows');
                 generate31DTRRows();
             }
+
+            applySalaryRuleToHeader('shift_1', true);
             
             console.log('DTR generation complete, row count:', document.querySelectorAll('#dtr_rows tr').length);
         })
@@ -8013,10 +8081,14 @@ document.getElementById('employee_select').addEventListener('change', function()
             } else {
                 generate31DTRRows();
             }
+
+            applySalaryRuleToHeader('shift_1', true);
         });
 });
 
-// Calculate period from selected date (cut-offs: 12th and 27th)
+// Calculate period from selected date using company cut-offs:
+// 1st cut-off: previous month 28 to current month 12
+// 2nd cut-off: current month 13 to 27
 function calculatePeriodFromDate(dateStr) {
     if (!dateStr) return null;
     
@@ -8028,16 +8100,21 @@ function calculatePeriodFromDate(dateStr) {
     let startDate, endDate, payDate;
     
     // Determine which cut-off period
-    if (day <= 15) {
-        // First period: 1st to 15th, pay date is 12th
-        startDate = new Date(year, month, 1);
-        endDate = new Date(year, month, 15);
-        payDate = new Date(year, month, 12);
-    } else {
-        // Second period: 16th to end of month, pay date is 27th
-        startDate = new Date(year, month, 16);
-        endDate = new Date(year, month + 1, 0); // Last day of current month
+    if (day >= 13 && day <= 27) {
+        // Second period: 13th to 27th (same month)
+        startDate = new Date(year, month, 13);
+        endDate = new Date(year, month, 27);
         payDate = new Date(year, month, 27);
+    } else if (day >= 28) {
+        // First period (late month segment): 28th (current month) to 12th (next month)
+        startDate = new Date(year, month, 28);
+        endDate = new Date(year, month + 1, 12);
+        payDate = new Date(year, month + 1, 12);
+    } else {
+        // First period (early month segment): 28th (previous month) to 12th (current month)
+        startDate = new Date(year, month - 1, 28);
+        endDate = new Date(year, month, 12);
+        payDate = new Date(year, month, 12);
     }
     
     // Format dates as YYYY-MM-DD (using local date to avoid timezone issues)
@@ -8058,7 +8135,7 @@ function calculatePeriodFromDate(dateStr) {
     };
 }
 
-// Update cutoff dropdown options to show actual last day of selected month
+// Update cutoff dropdown options to match company cut-offs
 function updateCutoffOptions() {
     const year = document.getElementById('payroll_year').value;
     const month = document.getElementById('payroll_month').value;
@@ -8068,25 +8145,28 @@ function updateCutoffOptions() {
         // Reset to default if year or month not selected
         cutoffSelect.innerHTML = `
             <option value="">Cut-off</option>
-            <option value="12">1st Cut-off (1–15)</option>
-            <option value="27">2nd Cut-off (16–31)</option>
+            <option value="12">1st Cut-off (28-12)</option>
+            <option value="27">2nd Cut-off (13-27)</option>
         `;
         return;
     }
-    
-    // Calculate last day of selected month
+
+    // Build labels with selected/previous month names for clarity
     const monthIndex = parseInt(month) - 1;
     const yearInt = parseInt(year);
-    const lastDay = new Date(yearInt, monthIndex + 1, 0).getDate();
+    const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
+                        'July', 'August', 'September', 'October', 'November', 'December'];
+    const currentMonthName = monthNames[monthIndex];
+    const previousMonthName = monthNames[new Date(yearInt, monthIndex - 1, 1).getMonth()];
     
     // Remember current selection
     const currentValue = cutoffSelect.value;
     
-    // Update options with dynamic last day
+    // Update options with company cut-off range labels
     cutoffSelect.innerHTML = `
         <option value="">Cut-off</option>
-        <option value="12">1st Cut-off (1–15)</option>
-        <option value="27">2nd Cut-off (16–${lastDay})</option>
+        <option value="12">1st Cut-off (${previousMonthName} 28-${currentMonthName} 12)</option>
+        <option value="27">2nd Cut-off (${currentMonthName} 13-27)</option>
     `;
     
     // Restore selection if it was previously set
@@ -8172,16 +8252,16 @@ function updatePayrollPeriod() {
     
     let startDate, endDate, payDate;
     
-    // Determine period based on cutoff
+    // Determine period based on company cutoff cycle
     if (cutoffDay === 12) {
-        // First period: 1st to 15th, pay date is 12th
-        startDate = new Date(yearInt, monthIndex, 1);
-        endDate = new Date(yearInt, monthIndex, 15);
+        // First period: previous month 28th to current month 12th
+        startDate = new Date(yearInt, monthIndex - 1, 28);
+        endDate = new Date(yearInt, monthIndex, 12);
         payDate = new Date(yearInt, monthIndex, 12);
     } else if (cutoffDay === 27) {
-        // Second period: 16th to end of month, pay date is 27th
-        startDate = new Date(yearInt, monthIndex, 16);
-        endDate = new Date(yearInt, monthIndex + 1, 0); // Last day of current month
+        // Second period: current month 13th to 27th
+        startDate = new Date(yearInt, monthIndex, 13);
+        endDate = new Date(yearInt, monthIndex, 27);
         payDate = new Date(yearInt, monthIndex, 27);
     }
     
@@ -8207,10 +8287,10 @@ function updatePayrollPeriod() {
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June',
                         'July', 'August', 'September', 'October', 'November', 'December'];
     
-    const payDateDisplay = `${monthNames[monthIndex]} ${cutoffDay}, ${yearInt}`;
-    const periodDisplay = cutoffDay === 12 ? 
-        `${monthNames[monthIndex]} 1-15, ${yearInt}` : 
-        `${monthNames[monthIndex]} 16-${endDate.getDate()}, ${yearInt}`;
+    const payDateDisplay = `${monthNames[payDate.getMonth()]} ${payDate.getDate()}, ${payDate.getFullYear()}`;
+    const periodDisplay = cutoffDay === 12
+        ? `${monthNames[startDate.getMonth()]} ${startDate.getDate()} - ${monthNames[endDate.getMonth()]} ${endDate.getDate()}, ${endDate.getFullYear()}`
+        : `${monthNames[monthIndex]} 13-27, ${yearInt}`;
     
     // Display elements removed - commenting out to prevent errors
     // document.getElementById('display_pay_date').textContent = payDateDisplay;
@@ -8229,11 +8309,11 @@ function updatePayrollPeriod() {
     generateDTRRows(formattedStart, formattedEnd);
 }
 
-// Fetch basic salary from previous period (first cutoff) to carry forward to second cutoff
+// Fetch basic salary from first cutoff (previous month 28 to current month 12) to carry forward to second cutoff
 function fetchPreviousPeriodBasicSalary(employeeId, year, monthIndex, currentPeriodStart) {
-    // Calculate first cutoff period dates
-    const firstCutoffStart = new Date(year, monthIndex, 1);
-    const firstCutoffEnd = new Date(year, monthIndex, 15);
+    // Calculate first cutoff period dates for the selected month context
+    const firstCutoffStart = new Date(year, monthIndex - 1, 28);
+    const firstCutoffEnd = new Date(year, monthIndex, 12);
     // Format dates as YYYY-MM-DD (using local date to avoid timezone issues)
     const formatDate = (d) => {
         const year = d.getFullYear();
@@ -8842,6 +8922,8 @@ function calculateTB5Row(day) {
     }
     
     const lateHrs = lateMins / 60;
+    const equivalentLateMins = getEquivalentLateMinutes(lateMins);
+    const equivalentLateHrs = equivalentLateMins / 60;
     const utHrs = utMins / 60;
     const otHrs = otMins / 60;
     
@@ -8849,7 +8931,7 @@ function calculateTB5Row(day) {
     const manualOtRate = parseFloat(document.getElementById('ot_rate')?.value) || 0;
 
     // Calculate deductions
-    const lateDed = lateHrs * hourlyRate;
+    const lateDed = equivalentLateHrs * hourlyRate;
     const utDed = utHrs * hourlyRate;
     const otPay = otHrs * manualOtRate;
     
@@ -9174,7 +9256,7 @@ function saveDTRToDatabase() {
     // TB5 uses hourly_rate and ot_rate input fields
     const hourlyRateValue = parseFloat(document.getElementById('hourly_rate')?.textContent) || (dailyRateValue / 8);
     const minuteRateValue = parseFloat(document.getElementById('minute_rate')?.textContent) || (hourlyRateValue / 60);
-    const otRateValue = parseFloat(document.getElementById('ot_rate')?.value) || (hourlyRateValue * 1.25);
+    const otRateValue = getManualOtRateOrZero();
     
     formData.append('per_hour_rate', hourlyRateValue);
     formData.append('per_minute_rate', minuteRateValue);
@@ -9206,6 +9288,7 @@ function saveDTRToDatabase() {
     formData.append('pagibig_contribution',   0);
     formData.append('late_threshold', document.getElementById('late_threshold')?.value || '8:00');
     formData.append('end_threshold', document.getElementById('end_threshold')?.value || '17:00');
+    formData.append('shift_rule_code', getSelectedShiftRuleCode());
     formData.append('classification', currentEmployeeClassification || '');
     formData.append('dtr_records', JSON.stringify(dtrRecords));
     formData.append('day_override_meta', JSON.stringify(buildDayOverrideMetaForSave()));
@@ -9334,7 +9417,7 @@ function saveMainDTRToDatabase() {
             half_out:       row.querySelector(`input[name="halfday_out_${rowNum}"]`)?.value  || '',
             is_halfday:     halfdayDeduct > 0 ? 1 : 0,
             total_work_hours: parseFloat(row.querySelector(`input[name="work_hours_${rowNum}"]`)?.value) || 0,
-            late_minutes:   parseFloat(row.querySelector(`input[name="late_mins_${rowNum}"]`)?.value)    || 0,
+            late_minutes:   parseFloat(row.querySelector(`input[name="actual_late_mins_${rowNum}"]`)?.value) || (parseFloat(row.querySelector(`input[name="late_mins_${rowNum}"]`)?.value) || 0),
             undertime_hours:parseFloat(row.querySelector(`input[name="undertime_${rowNum}"]`)?.value)    || 0,
             daily_ot_hours: parseFloat(row.querySelector(`input[name="ot_hours_${rowNum}"]`)?.value)     || 0,
             absent_deduct:  parseFloat(row.querySelector(`input[name="absent_deduct_${rowNum}"]`)?.value)|| 0,
@@ -9413,11 +9496,11 @@ function saveMainDTRToDatabase() {
     // Read from hidden input fields (not SPANs) to get actual numeric values
     const hourlyRateValue = document.getElementById('hourly_rate_value')?.value || (perDayRate / 8);
     const minuteRateValue = document.getElementById('minute_rate_value')?.value || (hourlyRateValue / 60);
-    const otRateValue = document.getElementById('ot_rate')?.value || (hourlyRateValue * 1.25);
+    const otRateValue = getManualOtRateOrZero();
     
     formData.append('per_hour_rate', parseFloat(hourlyRateValue));
     formData.append('per_minute_rate', parseFloat(minuteRateValue));
-    formData.append('ot_rate', parseFloat(otRateValue));
+    formData.append('ot_rate', otRateValue);
     
     formData.append('period_start',     periodStart);
     formData.append('period_end',       periodEnd);
@@ -9442,6 +9525,7 @@ function saveMainDTRToDatabase() {
     formData.append('total_govt_deductions', totalGovtDeduct);
     formData.append('late_threshold', document.getElementById('late_threshold')?.value || '8:00');
     formData.append('end_threshold', document.getElementById('end_threshold')?.value || '17:00');
+    formData.append('shift_rule_code', getSelectedShiftRuleCode());
     formData.append('classification', (activeTabId && employeeTabs[activeTabId]) ? (employeeTabs[activeTabId].classification || '') : (currentEmployeeClassification || ''));
     formData.append('dtr_records',  JSON.stringify(dtrRecords));
     formData.append('day_override_meta', JSON.stringify(buildDayOverrideMetaForSave()));
@@ -9594,7 +9678,7 @@ function openDTRFullView() {
     const cutoff = document.getElementById('payroll_cutoff')?.value;
     const monthNames = ['January', 'February', 'March', 'April', 'May', 'June', 'July', 'August', 'September', 'October', 'November', 'December'];
     const monthName = month ? monthNames[parseInt(month) - 1] : '';
-    const cutoffText = cutoff === '12' ? '1-15' : cutoff === '27' ? '16-End' : '';
+    const cutoffText = cutoff === '12' ? 'Prev 28-Curr 12' : cutoff === '27' ? '13-27' : '';
     setModalText('modal_period', year && month && cutoff ? `${monthName} ${year} (${cutoffText})` : 'Select Period');
     
     // Clone the main DTR table
@@ -10106,6 +10190,10 @@ function importSingleExcelFile(file) {
     return new Promise((resolve, reject) => {
         const formData = new FormData();
         formData.append('excel_file', file);
+        const employeeSelect = document.getElementById('employee_select');
+        const periodSelect = document.getElementById('payroll_period');
+        if (employeeSelect && employeeSelect.value) formData.append('employee_id', employeeSelect.value);
+        if (periodSelect && periodSelect.value) formData.append('payroll_period_id', periodSelect.value);
 
         fetch('import_dtr.php', {
             method: 'POST',
@@ -10376,44 +10464,65 @@ function populateMainDTRFromImport(data) {
         }
     }
 
-    // Set OT rate input from imported data if provided; otherwise derive from per-day rate
+    // Set OT rate input from imported data if provided; otherwise keep it at 0.00.
     const otField = document.getElementById('ot_rate');
     if (otField) {
         let otVal = parseFloat(empInfo.ot_rate) || 0;
-        if (!otVal) {
-            // Prefer the displayed daily_rate input if available
-            const dailyElClient = document.getElementById('daily_rate');
-            let perDayClient = 0;
-            if (dailyElClient) {
-                if (typeof parseFormattedNumber === 'function') {
-                    perDayClient = parseFormattedNumber(dailyElClient.value) || 0;
-                } else {
-                    perDayClient = parseFloat((dailyElClient.value || '').toString().replace(/,/g, '')) || 0;
-                }
-            }
-            if (!perDayClient && empInfo.per_day_rate) {
-                perDayClient = parseFloat(empInfo.per_day_rate) || 0;
-            }
-            if (perDayClient > 0) {
-                otVal = perDayClient / 8.0 * 1.25;
-            }
-        }
         if (otVal > 0) {
             otField.value = Number(otVal).toFixed(2);
+        } else {
+            otField.value = '0.00';
         }
     }
     
-    // Map imported data by INDEX (sequential order) rather than day number
-    // This ensures Excel row 6 → DTR row 1, Excel row 7 → DTR row 2, etc.
-    // This is more reliable than matching by day number which breaks across months
-    const dataByIndex = {};
+    const normalizeIsoDate = (value) => {
+        const raw = String(value || '').trim();
+        if (/^\d{4}-\d{2}-\d{2}$/.test(raw)) return raw;
+        const dt = new Date(raw + 'T00:00:00');
+        if (isNaN(dt.getTime())) return '';
+        const y = dt.getFullYear();
+        const m = String(dt.getMonth() + 1).padStart(2, '0');
+        const d = String(dt.getDate()).padStart(2, '0');
+        return `${y}-${m}-${d}`;
+    };
+    const getCutoffTypeFromDate = (dateStr) => {
+        const iso = normalizeIsoDate(dateStr);
+        if (!iso) return null;
+        const day = parseInt(iso.slice(8, 10), 10);
+        if (!Number.isFinite(day)) return null;
+        if (day >= 13 && day <= 27) return 'second';
+        if (day >= 28 || day <= 12) return 'first';
+        return null;
+    };
+
+    const periodCutoffType = getCutoffTypeFromDate(periodInfo.start_date || periodInfo.end_date || '');
+    const seenDates = new Set();
+    const filteredRecords = [];
+
     if (Array.isArray(dtrData)) {
-        dtrData.forEach((record, index) => {
-            dataByIndex[index + 1] = record;  // 1-indexed to match row numbers
+        dtrData.forEach((record) => {
+            const dateIso = normalizeIsoDate(record?.dtr_date);
+            if (!dateIso) return;
+
+            const rowCutoffType = getCutoffTypeFromDate(dateIso);
+            if (periodCutoffType && rowCutoffType && rowCutoffType !== periodCutoffType) {
+                return;
+            }
+
+            // Keep the first occurrence per date to avoid duplicate rows from noisy imports.
+            if (seenDates.has(dateIso)) {
+                return;
+            }
+            seenDates.add(dateIso);
+
+            filteredRecords.push({
+                ...record,
+                dtr_date: dateIso
+            });
         });
     }
     
-    console.log('Data mapped by index:', Object.keys(dataByIndex).length, 'rows -', Object.keys(dataByIndex).join(','));
+    console.log('Imported DTR records (filtered):', filteredRecords.length, 'period cutoff:', periodCutoffType || 'none');
     
     // Clear existing DTR rows and generate fresh ones
     const dtrRows = document.getElementById('dtr_rows');
@@ -10423,66 +10532,29 @@ function populateMainDTRFromImport(data) {
     }
     dtrRows.innerHTML = '';
     
-    // Determine date range from period info or imported data
-    let startDate = periodInfo.start_date ? new Date(periodInfo.start_date + 'T00:00:00') : null;
-    let endDate = periodInfo.end_date ? new Date(periodInfo.end_date + 'T00:00:00') : null;
-    
-    // If no period info, try to infer from DTR data
-    if (!startDate && dtrData.length > 0) {
-        const dates = dtrData.filter(r => r.dtr_date).map(r => new Date(r.dtr_date + 'T00:00:00'));
-        if (dates.length > 0) {
-            startDate = new Date(Math.min(...dates));
-            endDate = new Date(Math.max(...dates));
-        }
-    }
-    
-    // Generate rows using createDTRRowFromData (embeds values directly in HTML - reliable)
+    // Generate rows strictly from imported rows (Excel row driven), not from a synthesized date range.
     let rowNum = 1;
     let populatedCount = 0;
-    
-    if (startDate && endDate) {
-        for (let date = new Date(startDate); date <= endDate; date.setDate(date.getDate() + 1)) {
-            const y = date.getFullYear();
-            const m = String(date.getMonth() + 1).padStart(2, '0');
-            const d = String(date.getDate()).padStart(2, '0');
-            const dateStr = `${y}-${m}-${d}`;
-            
-            // Use imported data by ROW INDEX (not day number) for reliable sequential mapping
-            const record = dataByIndex[rowNum] || { dtr_date: dateStr };
+
+    if (filteredRecords.length > 0) {
+        filteredRecords.forEach((record) => {
             const row = createDTRRowFromData(rowNum, record);
             dtrRows.appendChild(row);
-            
-            // CRITICAL: Set time values AFTER appendChild for HTML5 time inputs
-            if (dataByIndex[rowNum]) {
-                const rec = dataByIndex[rowNum];
-                setTimeAfterAppend(rowNum, 'am_in', rec.am_time_in);
-                setTimeAfterAppend(rowNum, 'pm_out', rec.pm_time_out);
-                setTimeAfterAppend(rowNum, 'ot_out', rec.ot_time_out);
-                setTimeAfterAppend(rowNum, 'halfday_in', rec.halfday_in);
-                setTimeAfterAppend(rowNum, 'halfday_out', rec.halfday_out);
-                populatedCount++;
-            }
+
+            setTimeAfterAppend(rowNum, 'am_in', record.am_time_in);
+            setTimeAfterAppend(rowNum, 'pm_out', record.pm_time_out);
+            setTimeAfterAppend(rowNum, 'ot_out', record.ot_time_out);
+            setTimeAfterAppend(rowNum, 'halfday_in', record.halfday_in);
+            setTimeAfterAppend(rowNum, 'halfday_out', record.halfday_out);
+
+            populatedCount++;
             rowNum++;
-        }
+        });
     } else {
-        // Fallback: generate 31 rows using sequential index
-        for (let i = 1; i <= 31; i++) {
-            const record = dataByIndex[i] || { dtr_date: '' };
-            const row = createDTRRowFromData(i, record);
-            dtrRows.appendChild(row);
-            
-            // Set time values after append
-            if (dataByIndex[i]) {
-                const rec = dataByIndex[i];
-                setTimeAfterAppend(i, 'am_in', rec.am_time_in);
-                setTimeAfterAppend(i, 'pm_out', rec.pm_time_out);
-                setTimeAfterAppend(i, 'ot_out', rec.ot_time_out);
-                setTimeAfterAppend(i, 'halfday_in', rec.halfday_in);
-                setTimeAfterAppend(i, 'halfday_out', rec.halfday_out);
-                populatedCount++;
-            }
-        }
-        rowNum = 32;
+        // Keep one empty row to avoid a blank table if no valid imported record survived filtering.
+        const row = createDTRRowFromData(1, { dtr_date: '' });
+        dtrRows.appendChild(row);
+        rowNum = 2;
     }
     
     updateRowCount();
@@ -10572,7 +10644,7 @@ function populateMainDTRFromImport(data) {
         }, 500);
     });
     
-    console.log('Populated main DTR Calculator with', rowNum - 1, 'rows (' + populatedCount + ' had imported data from', Object.keys(dataByIndex).length, 'records)');
+    console.log('Populated main DTR Calculator with', rowNum - 1, 'rows (' + populatedCount + ' imported records from', Array.isArray(dtrData) ? dtrData.length : 0, 'raw rows)');
 }
 
 // Populate TB5 table from imported DTR data (legacy)
@@ -11015,7 +11087,7 @@ function createDTRRowFromData(rowNum, data) {
     // Create HTML without time values (will be set programmatically)
     row.innerHTML = `
         <td class="centered day-override-cell">
-            <input type="checkbox" name="day_override_enabled_${rowNum}" data-row="${rowNum}" class="dtr-day-override-toggle" ${isDayOverride ? 'checked' : ''} title="Enable per-day rate/time override">
+               <input type="checkbox" name="day_override_enabled_${rowNum}" data-row="${rowNum}" class="dtr-day-override-toggle" ${isDayOverride ? 'checked' : ''} title="Use Shift 2 rules for this day (unchecked uses Shift 1)">
         </td>
         <td class="date-cell">
             <input type="hidden" name="dtr_date_${rowNum}" data-row="${rowNum}" value="${dateStr || ''}">
@@ -11027,7 +11099,7 @@ function createDTRRowFromData(rowNum, data) {
         <td class="centered"><input type="checkbox" name="training_${rowNum}" data-row="${rowNum}" class="dtr-training" ${isTraining ? 'checked' : ''}></td>
         <td><input type="text" name="ot_out_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="18:00" maxlength="5" oninput="formatTime24(this)" ${disabledAttr} ${disabledStyle}></td>
         <td><input type="number" name="work_hours_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="${serverWorkHours.toFixed(2)}" step="1" title="Total work hours"></td>
-        <td><input type="number" name="late_mins_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="${Math.round(serverLateMins)}" step="0.01" title="Late minutes"></td>
+        <td><input type="number" name="late_mins_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="${getEquivalentLateMinutes(serverLateMins).toFixed(2)}" step="0.01" title="Late minutes (equivalent)"><input type="hidden" name="actual_late_mins_${rowNum}" data-row="${rowNum}" value="${serverLateMins.toFixed(2)}"></td>
         <td><input type="number" name="undertime_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="${serverUndertime.toFixed(2)}" step="0.01" title="Undertime hours"></td>
         <td><input type="number" name="ot_hours_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="${serverOT.toFixed(2)}" step="0.01" title="OT hours"></td>
         <td><input type="number" name="absent_day_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="${isAbsent ? '1' : '0'}" step="0.5" title="Absent days"></td>
@@ -11177,7 +11249,7 @@ function exportDTRToExcel() {
     const dailyRate = parseFormattedNumber(document.getElementById('daily_rate')?.value) || 500;
     const hourlyRate = parseFloat(document.getElementById('hourly_rate')?.textContent || document.getElementById('hourly_rate_value')?.value) || 62.50;
     const minuteRate = parseFloat(document.getElementById('minute_rate')?.textContent || document.getElementById('minute_rate_value')?.value) || 1.0417;
-    const otRate = parseFloat(document.getElementById('ot_rate')?.value) || 78.13;
+    const otRate = getManualOtRateOrZero();
     const lateThreshold = document.getElementById('late_threshold')?.value || '8:00';
     const endThreshold = document.getElementById('end_threshold')?.value || '17:00';
 
@@ -11369,14 +11441,7 @@ function formatBasicSalaryWithCommas(input) {
         input.value = value.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
     }
 
-    const activeRow = getActiveDayOverrideRow();
-    if (activeRow) {
-        syncHeaderFieldsToDayOverride(activeRow);
-        calculateRowDTR(activeRow);
-        calculateTotals();
-    } else {
-        captureGlobalRateFieldSnapshot();
-    }
+    recalculateAllRows();
 }
 
 // Format Per Day rate field with commas on blur
@@ -11426,7 +11491,7 @@ function updateRatesFromDaily() {
     
     // Get OT rate from input (user can change this)
     const otEl = document.getElementById('ot_rate');
-    const otRate = parseFloat(otEl.value) || 78.13;
+    const otRate = getManualOtRateOrZero();
     
     // Get basic salary
     const basicSalaryInput = document.getElementById('basic_monthly_salary');
@@ -11451,24 +11516,6 @@ function updateRatesFromDaily() {
     if (summaryOtEl) summaryOtEl.textContent = otRate.toFixed(2);
     if (summaryHalfdayEl) summaryHalfdayEl.textContent = halfDayRate.toFixed(2);
 
-    if (window.checkedDaysEditMode) {
-        applyCheckedDaysHeaderValuesToRows();
-        return;
-    }
-
-    const activeRow = getActiveDayOverrideRow();
-    if (!activeRow && !window.isSwitchingCheckedMode) {
-        window.checkedDaysDefaultSnapshot = getCurrentCheckedDaysValues();
-    }
-    if (activeRow) {
-        syncHeaderFieldsToDayOverride(activeRow);
-        calculateRowDTR(activeRow);
-        calculateTotals();
-        return;
-    } else {
-        captureGlobalRateFieldSnapshot();
-    }
-    
     // Update hidden inputs
     const hourlyInputEl = document.getElementById('hourly_rate_value');
     const minuteInputEl = document.getElementById('minute_rate_value');
@@ -11498,24 +11545,6 @@ function updateRatesFromDaily() {
 // Update OT rate in global storage when changed
 // Recalculate all DTR rows (used when late start or end time changes)
 function recalculateAllRows() {
-    if (window.checkedDaysEditMode) {
-        applyCheckedDaysHeaderValuesToRows();
-        return;
-    }
-
-    const activeRow = getActiveDayOverrideRow();
-    if (!activeRow) {
-        window.checkedDaysDefaultSnapshot = getCurrentCheckedDaysValues();
-    }
-    if (activeRow) {
-        syncHeaderFieldsToDayOverride(activeRow);
-        calculateRowDTR(activeRow);
-        calculateTotals();
-        return;
-    } else {
-        captureGlobalRateFieldSnapshot();
-    }
-
     document.querySelectorAll('#dtr_rows tr').forEach(row => {
         const rowNum = row.getAttribute('data-row');
         if (rowNum) calculateRowDTR(rowNum);
@@ -11525,7 +11554,7 @@ function recalculateAllRows() {
 
 function updateOTRate() {
     const otEl = document.getElementById('ot_rate');
-    const otRate = parseFloat(otEl.value) || 78.13;
+    const otRate = getManualOtRateOrZero();
     
     // Update summary display
     const summaryOtEl = document.getElementById('summary_ot_rate');
@@ -11542,10 +11571,6 @@ function updateOTRate() {
         if (rowNum) calculateRowDTR(rowNum);
     });
     calculateTotals();
-
-    if (!getActiveDayOverrideRow()) {
-        captureGlobalRateFieldSnapshot();
-    }
 
     // Recalculate all TB5 rows with new OT rate
     const tb5Body = document.getElementById('tb5_dtr_body');
@@ -11564,7 +11589,8 @@ document.addEventListener('DOMContentLoaded', function() {
 
     document.body.classList.toggle('manual-payroll-mode', currentPayrollMode === 'manual');
 
-    setCheckedDaysModeLabel(false);
+    bindShiftFieldEditTracking();
+    loadSalaryRulesForPayroll();
     
     // Restore employee tabs from localStorage (if any unsaved tabs remain from previous session)
     const hasRestoredTabs = restoreTabsFromLocalStorage();

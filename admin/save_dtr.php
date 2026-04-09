@@ -64,6 +64,10 @@ try {
     // Schedule thresholds (late start and end time)
     $lateThreshold = $_POST['late_threshold'] ?? '8:00';
     $endThreshold = $_POST['end_threshold'] ?? '17:00';
+    $shiftRuleCode = trim((string)($_POST['shift_rule_code'] ?? 'shift_1'));
+    if (!in_array($shiftRuleCode, ['shift_1', 'shift_2'], true)) {
+        $shiftRuleCode = 'shift_1';
+    }
     
     // New payroll summary fields
     $daysOffice = intval($_POST['days_office'] ?? 0);
@@ -334,9 +338,12 @@ try {
         $perHourRate = $perDayRate / 8;
         $perMinuteRate = $perHourRate / 60;
 
-        // Derive totals that were not sent separately
+        // Derive totals from per-row records to avoid re-converting late values.
         $totalWorkHoursSum  = array_sum(array_column($dtrRecords, 'total_work_hours'));
-        $totalLateMinutesSum = (int) round($totalLateHours * 60);
+        $totalLateMinutesSum = (int) round(array_sum(array_map(static function ($row) {
+            return floatval($row['late_minutes'] ?? 0);
+        }, $dtrRecords)));
+        $totalLateHoursSum = round($totalLateMinutesSum / 60, 4);
 
         // Build other_deductions_notes JSON with DTR breakdown
         // This is read by generate_payslip_pdf.php for the TARDINESS line item
@@ -354,6 +361,7 @@ try {
             'per_hour_rate'   => $perHourRate,
             'per_minute_rate' => $perMinuteRate,
             'ot_rate'         => ($otRateFromPost !== null && $otRateFromPost > 0) ? $otRateFromPost : null,
+            'shift_rule_code' => $shiftRuleCode,
             'standard_hours'  => $totalWorkHoursSum,
             'overtime_hours'  => $totalOtHours,
             'day_override'    => $dayOverrideMeta,
@@ -413,7 +421,7 @@ try {
             $stmt->execute([
                 $salary, $perDayRate, $perHourRate, $perMinuteRate,
                 $daysOffice, $totalWorkHoursSum, $totalLateMinutesSum,
-                $totalLateHours, $totalUndertimeHours, $totalOtHours, $totalAbsentDays,
+                $totalLateHoursSum, $totalUndertimeHours, $totalOtHours, $totalAbsentDays,
                 $grossPay, $totalOtPay,
                 $totalLateDeduct, $totalUtDeduct, $totalAbsentDeduct,
                 $sssContribution, $philhealthContrib, $pagibigContrib,
@@ -444,7 +452,7 @@ try {
                 $employeeId, $payrollPeriodId, $salary,
                 $perDayRate, $perHourRate, $perMinuteRate,
                 $daysOffice, $totalWorkHoursSum, $totalLateMinutesSum,
-                $totalLateHours, $totalUndertimeHours, $totalOtHours, $totalAbsentDays,
+                $totalLateHoursSum, $totalUndertimeHours, $totalOtHours, $totalAbsentDays,
                 $grossPay, $totalOtPay, $totalLateDeduct, $totalUtDeduct, $totalAbsentDeduct,
                 $sssContribution, $philhealthContrib, $pagibigContrib,
                 $grossPay + $totalOtPay + $trainingsCost, $totalDeductions, $netPay,

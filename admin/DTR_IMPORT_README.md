@@ -51,7 +51,11 @@ The Excel file should have the following columns (header row required):
 | Halfday In | Half-day start | HH:MM (optional) |
 | Halfday Out | Half-day end | HH:MM (optional) |
 | Absent | Absent flag | Yes/Y/1/X if absent |
+| Shift 1 | Shift selector | Marked (X/1/Yes) means Shift 1 |
+| Shift 2 | Shift selector | Marked (X/1/Yes) means Shift 2 (day override ON) |
 | Remarks | Notes | Text (optional) |
+
+If both Shift columns are blank, the import defaults to Shift 1 for that date.
 
 ### Downloading Template
 

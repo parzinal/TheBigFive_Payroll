@@ -64,14 +64,100 @@ if ($usePhpSpreadsheet) {
 }
 
 /**
+ * Resolve template date range.
+ * Priority: explicit payroll period dates -> current cutoff window fallback.
+ */
+function resolveTemplateDateRange($startDate, $endDate) {
+    $parseDate = static function ($value) {
+        $raw = trim((string)$value);
+        if ($raw === '') return null;
+        try {
+            return (new \DateTimeImmutable($raw))->setTime(0, 0, 0);
+        } catch (Exception $e) {
+            return null;
+        }
+    };
+
+    $start = $parseDate($startDate);
+    $end = $parseDate($endDate);
+
+    if ($start && $end) {
+        if ($start > $end) {
+            $tmp = $start;
+            $start = $end;
+            $end = $tmp;
+        }
+        return [$start->format('Y-m-d'), $end->format('Y-m-d')];
+    }
+
+    $today = new \DateTimeImmutable('today');
+    $day = (int)$today->format('j');
+
+    if ($day >= 13 && $day <= 27) {
+        $start = $today->setDate((int)$today->format('Y'), (int)$today->format('n'), 13);
+        $end = $today->setDate((int)$today->format('Y'), (int)$today->format('n'), 27);
+    } elseif ($day >= 28) {
+        $start = $today->setDate((int)$today->format('Y'), (int)$today->format('n'), 28);
+        $nextMonth = $today->modify('first day of next month');
+        $end = $nextMonth->setDate((int)$nextMonth->format('Y'), (int)$nextMonth->format('n'), 12);
+    } else {
+        $prevMonth = $today->modify('first day of previous month');
+        $start = $prevMonth->setDate((int)$prevMonth->format('Y'), (int)$prevMonth->format('n'), 28);
+        $end = $today->setDate((int)$today->format('Y'), (int)$today->format('n'), 12);
+    }
+
+    return [$start->format('Y-m-d'), $end->format('Y-m-d')];
+}
+
+function formatTemplatePeriodText($startDate, $endDate) {
+    if (!$startDate || !$endDate) {
+        return 'PAYROLL PERIOD: _______________';
+    }
+
+    $startTs = strtotime($startDate);
+    $endTs = strtotime($endDate);
+    if (!$startTs || !$endTs) {
+        return 'PAYROLL PERIOD: _______________';
+    }
+
+    if (date('Y-m', $startTs) === date('Y-m', $endTs)) {
+        return date('M. d', $startTs) . ' - ' . date('d, Y', $endTs);
+    }
+    return date('M. d', $startTs) . ' - ' . date('M. d, Y', $endTs);
+}
+
+function buildTemplateDateLabels($startDate, $endDate, $maxRows = 31) {
+    $labels = array_fill(0, max(0, (int)$maxRows), '');
+    if ($maxRows <= 0 || !$startDate || !$endDate) {
+        return $labels;
+    }
+
+    try {
+        $cursor = new \DateTimeImmutable($startDate);
+        $end = new \DateTimeImmutable($endDate);
+    } catch (Exception $e) {
+        return $labels;
+    }
+
+    $idx = 0;
+    while ($cursor <= $end && $idx < $maxRows) {
+        $labels[$idx] = $cursor->format('n/j');
+        $cursor = $cursor->modify('+1 day');
+        $idx++;
+    }
+
+    return $labels;
+}
+
+/**
  * Generate Excel template using PhpSpreadsheet
  * Creates 10 DTR sheets (DTR1-DTR10) with identical layout.
- * Column layout: A-V (22 columns) matching the manual DTR form
+ * Column layout: A-X (24 columns) matching the manual DTR form
  * A=Date, B=AM IN, C=PM OUT, D=Absent, E=Training, F=OT OUT,
  * G=Tot.Work, H=Late, I=Undertime, J=OT, K=Absent(days),
  * L=Late Deduct, M=Undertime Deduct, N=Halfday Deduct, O=OT Pay,
  * P=Minus OT Total Deductions, Q=Late/min(auto), R=Undertime(auto), S=OT(auto),
- * T=Gov't Benefits, U=Net Salary, V=Remarks
+ * T=Gov't Benefits, U=Net Salary, V=Remarks, W=Shift 1, X=Shift 2
  * Row 2 also has: M2=TRAINER input, N2=FIXRATE input
  */
 function generateExcelTemplate($startDate, $endDate) {
@@ -94,7 +180,7 @@ function generateExcelTemplate($startDate, $endDate) {
     $instructionSheet->setTitle('Instructions');
 
     $instructions = [
-        'TB5 DTR Template — 22-Column Layout (A-V) — 10 DTR Sheets',
+        'TB5 DTR Template — 24-Column Layout (A-X) — 10 DTR Sheets',
         '',
         'HOW TO USE THIS TEMPLATE:',
         '1. Each sheet (DTR1-DTR10) is for ONE employee',
@@ -112,11 +198,11 @@ function generateExcelTemplate($startDate, $endDate) {
         '   • Column E: Type X if training day',
         '   • Column F: OT OUT time if overtime (e.g. 19:00)',
         '   • Column T: Gov\'t deductions (SSS, PhilHealth, Pag-IBIG)',
-        '   • Column V: Remarks',
+        '   • Column V: Remarks | Column W: mark X for Shift 1 | Column X: mark X for Shift 2',
         '9. All calculation columns (G-U) auto-compute via Excel formulas',
-        '10. Summary section below row 37 shows NET SALARY breakdown',
+        '10. Summary section below the totals row shows NET SALARY breakdown',
         '',
-        'COLUMN LAYOUT (A-V, 22 columns):',
+        'COLUMN LAYOUT (A-X, 24 columns):',
         'A: DATE (auto-filled M/D format)',
         'B: AM IN (user input — time)',
         'C: PM OUT (user input — time)',
@@ -138,7 +224,7 @@ function generateExcelTemplate($startDate, $endDate) {
         'S: AUTO OT (formula)',
         'T: GOV\'T BENEFITS (user input)',
         'U: NET SALARY (formula)',
-        'V: REMARKS (user input)',
+        'V: REMARKS (user input), W: SHIFT 1 (mark X; blank defaults to Shift 1), X: SHIFT 2 (mark X)',
         '',
         'EMPLOYEE INFO (Row 2):',
         '  H2: Basic Monthly Salary (reference only)',
@@ -197,40 +283,26 @@ function generateExcelTemplate($startDate, $endDate) {
  */
 function buildDTRSheet($sheet, $startDate, $endDate) {
 
+    [$resolvedStartDate, $resolvedEndDate] = resolveTemplateDateRange($startDate, $endDate);
+    $dateLabels = buildTemplateDateLabels($resolvedStartDate, $resolvedEndDate, 31);
+
     // Column widths (same as export_dtr_calculator.php)
     $colWidths = [
         'A'=>12,'B'=>10,'C'=>10,'D'=>9,'E'=>9,'F'=>10,
         'G'=>12,'H'=>10,'I'=>12,'J'=>10,'K'=>10,
         'L'=>12,'M'=>14,'N'=>12,'O'=>12,'P'=>16,
-        'Q'=>12,'R'=>12,'S'=>12,'T'=>14,'U'=>14,'V'=>18,
+        'Q'=>12,'R'=>12,'S'=>12,'T'=>14,'U'=>14,'V'=>18,'W'=>10,'X'=>10,
     ];
     foreach ($colWidths as $col => $w) {
         $sheet->getColumnDimension($col)->setWidth($w);
     }
 
     // ── Determine period text ──
-    $periodText = '';
-    if ($startDate && $endDate) {
-        $periodText = date('M. d', strtotime($startDate)) . ' – ' . date('d, Y', strtotime($endDate));
-    } else {
-        $periodText = 'PAYROLL PERIOD: _______________';
-    }
+    $periodText = formatTemplatePeriodText($resolvedStartDate, $resolvedEndDate);
 
     // ── Default time thresholds (scheduled start default 8:00 — grace ends at 8:05) ──
     $lateThreshold = '8:00';
     $endThreshold  = '17:00';
-
-    // ── Determine month for auto-fill dates ──
-    if ($startDate) {
-        $dt = new \DateTime($startDate);
-        $templateMonth = (int)$dt->format('n');
-        $templateYear  = (int)$dt->format('Y');
-        $daysInMonth   = (int)$dt->format('t');
-    } else {
-        $templateMonth = (int)date('n');
-        $templateYear  = (int)date('Y');
-        $daysInMonth   = (int)date('t');
-    }
 
     // ── ROW 1: Company + Period (same as export) ──
     $sheet->setCellValue('A1', 'THE BIG FIVE TRAINING AND ASSESSMENT CENTER INC.');
@@ -345,6 +417,8 @@ function buildDTRSheet($sheet, $startDate, $endDate) {
         'T4'=>'Government',
         'U4'=>'Net',
         'V4'=>'REMARKS',
+        'W4'=>'SHIFT 1',
+        'X4'=>'SHIFT 2',
     ];
     foreach ($mainHeaders4 as $c => $v) $sheet->setCellValue($c, $v);
     $sheet->mergeCells('Q4:S4');
@@ -372,10 +446,12 @@ function buildDTRSheet($sheet, $startDate, $endDate) {
         'T5'=>'Benefits',
         'U5'=>'Salary',
         'V5'=>'',
+        'W5'=>'MARK X',
+        'X5'=>'MARK X',
     ];
     foreach ($subHeaders5 as $c => $v) $sheet->setCellValue($c, $v);
 
-    $sheet->getStyle('A4:V5')->applyFromArray([
+    $sheet->getStyle('A4:X5')->applyFromArray([
         'font'      => ['bold'=>true,'size'=>9],
         'alignment' => [
             'horizontal'=> \PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER,
@@ -394,6 +470,7 @@ function buildDTRSheet($sheet, $startDate, $endDate) {
         'L4:N5'=>'FFCCCC', 'O4:O5'=>'99FF99', 'P4:P5'=>'FFCCCC',
         'Q4:S5'=>'CC99FF',
         'T4:T5'=>'CCFFFF', 'U4:U5'=>'99FF99',
+        'W4:X5'=>'FFE6CC',
     ];
     foreach ($hc as $range => $rgb) {
         $sheet->getStyle($range)->applyFromArray([
@@ -426,16 +503,21 @@ function buildDTRSheet($sheet, $startDate, $endDate) {
     ];
 
     $firstData = 6;
-    $maxDataRow = 36; // 31 days max
+    $filledDateCount = 0;
+    foreach ($dateLabels as $label) {
+        if ($label === '') break;
+        $filledDateCount++;
+    }
+    if ($filledDateCount <= 0) {
+        $filledDateCount = 1;
+    }
+    $maxDataRow = $firstData + $filledDateCount - 1;
 
-    for ($dayNum = 1; $dayNum <= 31; $dayNum++) {
+    for ($dayNum = 1; $dayNum <= $filledDateCount; $dayNum++) {
         $dataRow = $dayNum + 5; // rows 6-36
 
-        // Auto-fill date (M/D format)
-        $dateDisp = '';
-        if ($dayNum <= $daysInMonth) {
-            $dateDisp = $templateMonth . '/' . $dayNum;
-        }
+        // Auto-fill date (M/D) following cutoff period dates.
+        $dateDisp = $dateLabels[$dayNum - 1] ?? '';
         $sheet->setCellValue("A{$dataRow}", $dateDisp);
 
         // B: AM IN — user input (time)
@@ -509,6 +591,7 @@ function buildDTRSheet($sheet, $startDate, $endDate) {
             'alignment'=>['horizontal'=>\PhpOffice\PhpSpreadsheet\Style\Alignment::HORIZONTAL_CENTER],
         ]);
         $sheet->getStyle("V{$dataRow}")->applyFromArray($inputStyle);
+        $sheet->getStyle("W{$dataRow}:X{$dataRow}")->applyFromArray($inputStyle);
 
         // Time formats
         $sheet->getStyle("B{$dataRow}:C{$dataRow}")->getNumberFormat()->setFormatCode('h:mm');
@@ -524,7 +607,7 @@ function buildDTRSheet($sheet, $startDate, $endDate) {
         $sheet->getStyle("U{$dataRow}")->getNumberFormat()->setFormatCode('#,##0.00');
 
         // Borders
-        $sheet->getStyle("A{$dataRow}:V{$dataRow}")->applyFromArray([
+        $sheet->getStyle("A{$dataRow}:X{$dataRow}")->applyFromArray([
             'borders' => ['allBorders'=>['borderStyle'=> \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_THIN]],
         ]);
 
@@ -542,6 +625,10 @@ function buildDTRSheet($sheet, $startDate, $endDate) {
             $sheet->getComment("F{$dataRow}")->setWidth('220pt')->setHeight('40pt');
             $sheet->getComment("T{$dataRow}")->getText()->createTextRun("Enter gov't deduction (SSS, PhilHealth, Pag-IBIG)");
             $sheet->getComment("T{$dataRow}")->setWidth('220pt')->setHeight('40pt');
+            $sheet->getComment("W{$dataRow}")->getText()->createTextRun('Mark X for Shift 1 (blank also defaults to Shift 1)');
+            $sheet->getComment("W{$dataRow}")->setWidth('240pt')->setHeight('40pt');
+            $sheet->getComment("X{$dataRow}")->getText()->createTextRun('Mark X for Shift 2 to apply Shift 2 rules for this date');
+            $sheet->getComment("X{$dataRow}")->setWidth('240pt')->setHeight('40pt');
             $sheet->getComment("H2")->getText()->createTextRun('Enter Basic Monthly Salary here (reference only — does not affect calculations)');
             $sheet->getComment("H2")->setWidth('300pt')->setHeight('40pt');
             $sheet->getComment("J2")->getText()->createTextRun('Enter Per Day Rate here (e.g. 500.00). This drives all deduction and salary calculations.');
@@ -553,9 +640,9 @@ function buildDTRSheet($sheet, $startDate, $endDate) {
         }
     }
 
-    // ── TOTALS ROW (row 37, same as export) ──
-    $totalRow  = 37;
-    $lastData  = $maxDataRow; // 36
+    // ── TOTALS ROW (immediately below data rows) ──
+    $totalRow  = $maxDataRow + 1;
+    $lastData  = $maxDataRow;
 
     $sheet->setCellValue("A{$totalRow}", 'TOTALS:');
     $sheet->mergeCells("A{$totalRow}:F{$totalRow}");
@@ -567,7 +654,7 @@ function buildDTRSheet($sheet, $startDate, $endDate) {
     foreach (['G','H','I','J','K','L','M','N','O','P','Q','R','S','T','U'] as $col) {
         $sheet->setCellValue("{$col}{$totalRow}", "=SUM({$col}{$firstData}:{$col}{$lastData})");
     }
-    $sheet->getStyle("A{$totalRow}:V{$totalRow}")->applyFromArray([
+    $sheet->getStyle("A{$totalRow}:X{$totalRow}")->applyFromArray([
         'font'      => ['bold'=>true,'size'=>10,'color'=>['rgb'=>'FFFFFF']],
         'fill'      => ['fillType'=> \PhpOffice\PhpSpreadsheet\Style\Fill::FILL_SOLID,'startColor'=>['rgb'=>'4472C4']],
         'borders'   => ['allBorders'=>['borderStyle'=> \PhpOffice\PhpSpreadsheet\Style\Border::BORDER_MEDIUM]],
@@ -708,7 +795,7 @@ function buildDTRSheet($sheet, $startDate, $endDate) {
 }
 
 /**
- * Generate CSV template as fallback — matches 22-column A-V layout
+ * Generate CSV template as fallback — matches 24-column A-X layout
  */
 function generateCSVTemplate($startDate, $endDate) {
     $filename = 'DTR_Template_' . date('Y-m-d') . '.csv';
@@ -719,10 +806,11 @@ function generateCSVTemplate($startDate, $endDate) {
 
     $output = fopen('php://output', 'w');
 
+    [$resolvedStartDate, $resolvedEndDate] = resolveTemplateDateRange($startDate, $endDate);
+    $dateLabels = buildTemplateDateLabels($resolvedStartDate, $resolvedEndDate, 31);
+
     // Period
-    $periodText = $startDate && $endDate
-        ? date('M. d', strtotime($startDate)) . '-' . date('d, Y', strtotime($endDate))
-        : 'PAYROLL PERIOD: _______________';
+    $periodText = formatTemplatePeriodText($resolvedStartDate, $resolvedEndDate);
 
     // Row 1
     fputcsv($output, ['THE BIG FIVE TRAINING AND ASSESSMENT CENTER INC.', '', '', '', '', '', $periodText]);
@@ -731,18 +819,23 @@ function generateCSVTemplate($startDate, $endDate) {
     // Row 3 (blank)
     fputcsv($output, []);
     // Row 4: Main headers
-    fputcsv($output, ['MO/YR','AM IN','PM OUT','ABSENT','TRAINING','OT OUT','TOT.WORK','LATE','UNDERTIME','OT','ABSENT','LATE','UNDERTIME','HALFDAY','OT PAY','MINUS OT TOTAL','AUTOMATIC CALCULATIONS','','','Government','Net','REMARKS']);
+    fputcsv($output, ['MO/YR','AM IN','PM OUT','ABSENT','TRAINING','OT OUT','TOT.WORK','LATE','UNDERTIME','OT','ABSENT','LATE','UNDERTIME','HALFDAY','OT PAY','MINUS OT TOTAL','AUTOMATIC CALCULATIONS','','','Government','Net','REMARKS','SHIFT 1','SHIFT 2']);
     // Row 5: Sub headers
-    fputcsv($output, ['DATE','','','','','','(in hours)','(in mins)','(in hours)','(in hours)','(in days)','DEDUCT','DEDUCT','DEDUCT','','DEDUCTIONS','LATE/min','UNDERTIME','OT','Benefits','Salary','']);
+    fputcsv($output, ['DATE','','','','','','(in hours)','(in mins)','(in hours)','(in hours)','(in days)','DEDUCT','DEDUCT','DEDUCT','','DEDUCTIONS','LATE/min','UNDERTIME','OT','Benefits','Salary','','MARK X','MARK X']);
 
-    // Determine month
-    $csvMonth = $startDate ? (int)date('n', strtotime($startDate)) : (int)date('n');
-    $csvDaysInMonth = $startDate ? (int)date('t', strtotime($startDate)) : (int)date('t');
+    $filledDateCount = 0;
+    foreach ($dateLabels as $label) {
+        if ($label === '') break;
+        $filledDateCount++;
+    }
+    if ($filledDateCount <= 0) {
+        $filledDateCount = 1;
+    }
 
-    // Data rows (31 days)
-    for ($i = 1; $i <= 31; $i++) {
-        $dateVal = $i <= $csvDaysInMonth ? "{$csvMonth}/{$i}" : '';
-        fputcsv($output, array_pad([$dateVal], 22, ''));
+    // Data rows (only cutoff range dates for a cleaner template)
+    for ($i = 1; $i <= $filledDateCount; $i++) {
+        $dateVal = $dateLabels[$i - 1] ?? '';
+        fputcsv($output, array_pad([$dateVal], 24, ''));
     }
 
     fclose($output);

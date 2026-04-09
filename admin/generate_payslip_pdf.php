@@ -25,7 +25,7 @@
  * union_fees   → LOAN deduction (part)
  * pension      → LOAN deduction (part)
  * other_deductions → OTHERS/C.A. deduction (part)
- * dtr_data.{late_deduct, undertime_deduct, halfday_deduct, absent_deduct} → TARDINESS
+ * dtr_data.{late_deduct, undertime_deduct, halfday_deduct, absent_deduct} → DTR deduction rows
  */
 
 // ── STEP 1: Load root Composer autoloader FIRST ───────────────────────────────
@@ -96,6 +96,104 @@ if ($payslip_id <= 0) {
     die('Invalid payslip ID.');
 }
 
+/**
+ * Returns true when a DTR remark should be treated as an "other deduction"
+ * instead of a government contribution/tax tag.
+ */
+function isOtherDeductionRemarkPdf(string $remark): bool
+{
+  $remark = strtoupper(trim($remark));
+  if ($remark === '') {
+    return false;
+  }
+
+  $governmentMarkers = [
+    'SSS',
+    'PHILHEALTH',
+    'PHIL HEALTH',
+    'PAGIBIG',
+    'PAG-IBIG',
+    'HDMF',
+    'WITHHOLD',
+    'TAX',
+  ];
+
+  foreach ($governmentMarkers as $marker) {
+    if (strpos($remark, $marker) !== false) {
+      return false;
+    }
+  }
+
+  return true;
+}
+
+/**
+ * Collect DTR deduction metadata (all remarks + derived other deduction total)
+ * for an employee/period, optionally scoped by cutoff.
+ */
+function collectPayslipDtrMetadataPdf(PDO $pdo, int $employeeId, int $periodId, ?string $cutoffType = null): array
+{
+  $sql = "
+    SELECT remarks, govt_deduct
+    FROM dtr_records
+    WHERE employee_id = :employee_id
+      AND payroll_period_id = :period_id
+  ";
+
+  if ($cutoffType === 'first') {
+    $sql .= " AND DAY(dtr_date) <= 15";
+  } elseif ($cutoffType === 'second') {
+    $sql .= " AND DAY(dtr_date) >= 16";
+  }
+
+  $stmt = $pdo->prepare($sql);
+  $stmt->execute([
+    ':employee_id' => $employeeId,
+    ':period_id' => $periodId,
+  ]);
+
+  $remarks = [];
+  $otherDeduction = 0.0;
+  $withholdingTax = 0.0;
+  $sss = 0.0;
+  $philhealth = 0.0;
+  $pagibig = 0.0;
+
+  while ($row = $stmt->fetch(PDO::FETCH_ASSOC)) {
+    $remark = trim((string)($row['remarks'] ?? ''));
+    $govtDeduct = (float)($row['govt_deduct'] ?? 0);
+
+    if ($remark !== '' && !in_array($remark, $remarks, true)) {
+      $remarks[] = $remark;
+    }
+
+    if ($govtDeduct > 0 && $remark !== '') {
+      $upper = strtoupper($remark);
+      if (strpos($upper, 'PHILHEALTH') !== false || strpos($upper, 'PHIL HEALTH') !== false) {
+        $philhealth += $govtDeduct;
+      } elseif (strpos($upper, 'PAGIBIG') !== false || strpos($upper, 'PAG-IBIG') !== false || strpos($upper, 'HDMF') !== false) {
+        $pagibig += $govtDeduct;
+      } elseif (strpos($upper, 'WITHHOLD') !== false || strpos($upper, 'TAX') !== false) {
+        $withholdingTax += $govtDeduct;
+      } elseif (strpos($upper, 'SSS') !== false) {
+        $sss += $govtDeduct;
+      } elseif (isOtherDeductionRemarkPdf($remark)) {
+        $otherDeduction += $govtDeduct;
+      }
+    }
+  }
+
+  return [
+    'dtr_remarks' => implode(' | ', $remarks),
+    'dtr_remarks_list' => $remarks,
+    'dtr_other_deduction' => round($otherDeduction, 2),
+    'dtr_withholding_tax' => round($withholdingTax, 2),
+    'dtr_sss' => round($sss, 2),
+    'dtr_philhealth' => round($philhealth, 2),
+    'dtr_pagibig' => round($pagibig, 2),
+  ];
+}
+
 try {
     $pdo = getDBConnection();
 
@@ -104,6 +202,7 @@ try {
         SELECT
             pc.id,
             pc.employee_id,
+          pc.payroll_period_id,
             e.employee_code,
             e.full_name                 AS employee_name,
             e.position,
@@ -171,6 +270,58 @@ if (!empty($p['other_deductions_notes'])) {
 // DTR breakdown lives inside the dtr_data sub-key
 $dtr = $notes['dtr_data'] ?? [];
 
+// DTR deduction remarks + derived other deduction fallback
+$cutoffType = in_array(($notes['cutoff_type'] ?? null), ['first', 'second'], true)
+  ? $notes['cutoff_type']
+  : null;
+$dtrRemarks = trim((string)($notes['dtr_remarks'] ?? ''));
+$dtrRemarksList = [];
+if (isset($notes['dtr_remarks_list']) && is_array($notes['dtr_remarks_list'])) {
+  foreach ($notes['dtr_remarks_list'] as $entry) {
+    $entry = trim((string)$entry);
+    if ($entry !== '' && !in_array($entry, $dtrRemarksList, true)) {
+      $dtrRemarksList[] = $entry;
+    }
+  }
+}
+$dtrOtherDeduction = floatval($notes['dtr_other_deduction'] ?? 0);
+$dtrWithholdingTax = floatval($notes['dtr_withholding_tax'] ?? 0);
+$dtrSss = floatval($notes['dtr_sss'] ?? 0);
+$dtrPhilhealth = floatval($notes['dtr_philhealth'] ?? 0);
+$dtrPagibig = floatval($notes['dtr_pagibig'] ?? 0);
+
+if (!empty($p['payroll_period_id'])) {
+  $dtrMeta = collectPayslipDtrMetadataPdf(
+    $pdo,
+    (int)$p['employee_id'],
+    (int)$p['payroll_period_id'],
+    $cutoffType
+  );
+
+  // Always prefer live DTR values when available.
+  if (!empty(trim((string)$dtrMeta['dtr_remarks']))) {
+    $dtrRemarks = $dtrMeta['dtr_remarks'];
+  }
+  if (!empty($dtrMeta['dtr_remarks_list']) && is_array($dtrMeta['dtr_remarks_list'])) {
+    $dtrRemarksList = $dtrMeta['dtr_remarks_list'];
+  }
+  if ((float)$dtrMeta['dtr_other_deduction'] > 0) {
+    $dtrOtherDeduction = $dtrMeta['dtr_other_deduction'];
+  }
+  if ((float)$dtrMeta['dtr_withholding_tax'] > 0) {
+    $dtrWithholdingTax = $dtrMeta['dtr_withholding_tax'];
+  }
+  if ((float)$dtrMeta['dtr_sss'] > 0) {
+    $dtrSss = $dtrMeta['dtr_sss'];
+  }
+  if ((float)$dtrMeta['dtr_philhealth'] > 0) {
+    $dtrPhilhealth = $dtrMeta['dtr_philhealth'];
+  }
+  if ((float)$dtrMeta['dtr_pagibig'] > 0) {
+    $dtrPagibig = $dtrMeta['dtr_pagibig'];
+  }
+}
+
 // ── Earnings ──────────────────────────────────────────────────────────────────
 // basic_pay  = regular (standard + basic allowance) — stored directly in payroll_computations
 // ot_pay     = overtime pay — stored directly in payroll_computations
@@ -197,48 +348,136 @@ $philheath = floatval($p['philhealth_contribution']);  // philhealth_contributio
 $pagibig = floatval($notes['student_loan'] ?? null)
          ?: floatval($p['pagibig_contribution'] ?? 0);
 
-// TARDINESS = late + undertime + halfday only (exclude absences)
-$tardiness = floatval($dtr['late_deduct']      ?? 0)
-           + floatval($dtr['undertime_deduct']  ?? 0)
-           + floatval($dtr['halfday_deduct']    ?? 0);
-
-// Fallback: if no JSON dtr_data breakdown, use the direct DB columns
-if ($tardiness == 0 && empty($dtr)) {
-    $tardiness = floatval($p['late_deduction']      ?? 0)
-     + floatval($p['undertime_deduction']  ?? 0)
-     + floatval($notes['halfday_deduct']   ?? 0);
+// Override DB contribution values with live DTR values when available.
+if ($dtrWithholdingTax > 0) {
+  $wh_tax = $dtrWithholdingTax;
+}
+if ($dtrSss > 0) {
+  $sss = $dtrSss;
+}
+if ($dtrPhilhealth > 0) {
+  $philheath = $dtrPhilhealth;
+}
+if ($dtrPagibig > 0) {
+  $pagibig = $dtrPagibig;
 }
 
-// LOAN = union fees + pension contributions
-$loan = floatval($notes['union_fees'] ?? 0)
-      + floatval($notes['pension']    ?? 0);
+if (empty($dtrRemarksList) && $dtrRemarks !== '') {
+  $dtrRemarksList = [trim($dtrRemarks)];
+}
+if (!empty($dtrRemarksList)) {
+  $dtrRemarks = implode(' | ', $dtrRemarksList);
+}
+
+$dtrRemarksHtml = '';
+if (!empty($dtrRemarksList)) {
+  $renderedRemarks = [];
+  foreach ($dtrRemarksList as $remarkItem) {
+    $remarkItem = trim((string)$remarkItem);
+    if ($remarkItem !== '') {
+      $renderedRemarks[] = '&bull; ' . htmlspecialchars($remarkItem);
+    }
+  }
+  $dtrRemarksHtml = implode('<br>', $renderedRemarks);
+} elseif ($dtrRemarks !== '') {
+  $dtrRemarksHtml = htmlspecialchars($dtrRemarks);
+}
+
+// DTR breakdown rows (match on-screen preview rows)
+$late_deduct      = floatval($dtr['late_deduct'] ?? $p['late_deduction'] ?? 0);
+$undertime_deduct = floatval($dtr['undertime_deduct'] ?? $p['undertime_deduction'] ?? 0);
+$halfday_deduct   = floatval($dtr['halfday_deduct'] ?? $notes['halfday_deduct'] ?? 0);
+
+// LOAN = student loan + union fees + pension contributions
+$loan = floatval($notes['student_loan'] ?? 0)
+  + floatval($notes['union_fees'] ?? 0)
+  + floatval($notes['pension']    ?? 0);
 
 // OTHERS / C.A. = miscellaneous JSON deductions + DB other_deductions
-$others_ca = floatval($notes['other_deductions'] ?? 0)
-           + floatval($p['other_deductions']      ?? 0);
+$stored_others_ca = floatval($notes['other_deductions'] ?? 0)
+         + floatval($p['other_deductions']      ?? 0);
+$others_ca = $stored_others_ca > 0 ? $stored_others_ca : $dtrOtherDeduction;
 
 // Totals
 $gross_pay    = floatval($p['total_earnings']);
 $government_deductions = $wh_tax + $sss + $philheath + $pagibig;
-$net_pay      = floatval($p['net_pay']);
+$net_pay_raw  = floatval($p['net_pay']);
+
+// Backward-compatible fallback: older cutoff rows stored net_pay without Others/C.A.
+$looksMissingOthers = $others_ca > 0
+  && abs($net_pay_raw - ($gross_pay - $government_deductions)) < 0.01;
+$net_pay = $looksMissingOthers ? ($net_pay_raw - $others_ca) : $net_pay_raw;
+if ($net_pay < 0) {
+  $net_pay = 0;
+}
 
 // ── Period / Cut-off label ────────────────────────────────────────────────────
-// If this is a cutoff-specific computation, use the cutoff label from JSON
-if (!empty($notes['cutoff_type'])) {
-    $cutoff_str = $notes['cutoff_type'] === 'first'
-        ? '1st CUT OFF ( 1st / 15th )'
-        : '2nd CUT OFF ( 16th / 31st )';
-} else {
-    $start_day  = (int) date('j', strtotime($p['start_date']));
-    $cutoff_str = $start_day <= 15
-        ? '1st CUT OFF ( 1st / 15th )'
-        : '2nd CUT OFF ( 16th / 31st )';
+function formatCutoffMonthDayPdf(?string $dateValue): string
+{
+  $raw = trim((string)$dateValue);
+  if ($raw === '' || !preg_match('/^\d{4}-\d{2}-\d{2}$/', $raw)) {
+    return '';
+  }
+
+  $ts = strtotime($raw);
+  if ($ts === false) {
+    return '';
+  }
+
+  return date('M j', $ts);
 }
+
+function formatCutoffRangePdf(?string $startDate, ?string $endDate, bool $isFirstCutoff, ?string $anchorDate = null): string
+{
+  $startLabel = formatCutoffMonthDayPdf($startDate);
+  $endLabel = formatCutoffMonthDayPdf($endDate);
+  if ($startLabel !== '' && $endLabel !== '') {
+    return $startLabel . ' - ' . $endLabel;
+  }
+
+  $anchorTs = strtotime((string)$anchorDate);
+  if ($anchorTs !== false) {
+    $year = (int)date('Y', $anchorTs);
+    $month = (int)date('n', $anchorTs);
+    if ($isFirstCutoff) {
+      $rangeStart = sprintf('%04d-%02d-28', $month === 1 ? $year - 1 : $year, $month === 1 ? 12 : $month - 1);
+      $rangeEnd = sprintf('%04d-%02d-12', $year, $month);
+    } else {
+      $rangeStart = sprintf('%04d-%02d-13', $year, $month);
+      $rangeEnd = sprintf('%04d-%02d-27', $year, $month);
+    }
+
+    $fallbackStart = formatCutoffMonthDayPdf($rangeStart);
+    $fallbackEnd = formatCutoffMonthDayPdf($rangeEnd);
+    if ($fallbackStart !== '' && $fallbackEnd !== '') {
+      return $fallbackStart . ' - ' . $fallbackEnd;
+    }
+  }
+
+  return '';
+}
+
+// If this is a cutoff-specific computation, use the cutoff type from JSON.
+$is_first_cutoff = false;
+if (!empty($notes['cutoff_type'])) {
+  $is_first_cutoff = $notes['cutoff_type'] === 'first';
+} else {
+  $start_day  = (int) date('j', strtotime($p['start_date']));
+  $is_first_cutoff = ($start_day >= 28 || $start_day <= 12);
+}
+
+$cutoff_range = formatCutoffRangePdf(
+  $p['start_date'] ?? '',
+  $p['end_date'] ?? '',
+  $is_first_cutoff,
+  $p['pay_date'] ?? $p['created_at'] ?? null
+);
+$cutoff_str = ($is_first_cutoff ? '1st CUT OFF' : '2nd CUT OFF') . ($cutoff_range !== '' ? ' (' . $cutoff_range . ')' : '');
 
 // Date displayed on payslip
 $pay_date_fmt = !empty($p['pay_date'])
-    ? date('d-M-y', strtotime($p['pay_date']))
-    : date('d-M-y', strtotime($p['created_at']));
+    ? date('d M Y', strtotime($p['pay_date']))
+    : date('d M Y', strtotime($p['created_at']));
 
 // OT in minutes (for the MIN column)
 $ot_minutes = $ot_hours > 0 ? (int) round($ot_hours * 60) : '';
@@ -459,14 +698,37 @@ td    { vertical-align:middle; }
 
 /* ════ 5. FOOTER ════ */
 .footer-bar {
-    background: #f8fafc;
-    border-top: 1.5px solid #e2e8f0;
+  background: #f0f4ff;
+  border-top: 2px solid #0f3460;
 }
-.footer-bar td { padding: 6px 14px; font-size: 8pt; }
-.sig-label { color:#64748b; font-size:7pt; font-weight:700; text-transform:uppercase; letter-spacing:0.8px; display:block; }
-.sig-name  { color:#0f3460; font-weight:700; font-size:8.5pt; margin-top:1px; display:block; }
-.sig-line  { border-bottom:1.5px solid #94a3b8; display:inline-block; min-width:100px; margin-top:1px; }
-.approved-name { color:#0f3460; font-weight:700; font-style:italic; }
+.footer-bar td { padding: 8px 14px; vertical-align: top; }
+.footer-left { border-right: 1.5px solid #c7d7f9; }
+.foot-stamp {
+  background: #0f3460;
+  color: #fff;
+  font-size: 6.5pt;
+  font-weight: 800;
+  letter-spacing: 1px;
+  text-transform: uppercase;
+  padding: 2px 8px;
+  border-radius: 3px;
+  display: inline-block;
+  margin-bottom: 6px;
+}
+.sig-line {
+  border-bottom: 2px solid #0f3460;
+  display: block;
+  width: 170px;
+  margin-top: 18px;
+}
+.sig-note {
+  font-size: 6pt;
+  color: #64748b;
+  display: block;
+  margin-top: 3px;
+  text-align: center;
+  width: 170px;
+}
 
 </style>
 </head>
@@ -476,11 +738,11 @@ td    { vertical-align:middle; }
 <!-- ══ 1. BANNER ═══════════════════════════════════════════════════════════ -->
 <table class="banner">
   <tr>
-    <td style="width:70%;">
+    <td style="width:68%;">
       <div class="company-tag">Official Payslip Document</div>
       <div class="company-name">The Big Five Training and Assessment Center</div>
     </td>
-    <td style="width:30%; text-align:center; border-left:1px solid #1a3a6e;">
+    <td style="width:32%; text-align:center; border-left:1px solid #1a3a6e;">
       <div class="tb5-badge">TB5 COPY</div>
       <span class="payslip-tag">Semi-Monthly Payroll</span>
     </td>
@@ -490,17 +752,17 @@ td    { vertical-align:middle; }
 <!-- ══ 2. INFO STRIP ═══════════════════════════════════════════════════════ -->
 <table class="info-strip">
   <tr>
-    <td style="width:38%;">
+    <td style="width:36%;">
       <span class="info-label">Employee</span>
       <span class="emp-pill">' . htmlspecialchars($p['employee_name']) . '</span>
     </td>
-    <td class="divider-v" style="width:20%;">
+    <td class="divider-v" style="width:18%;">
       <span class="info-label">Status</span>
       <span class="status-pill">' . htmlspecialchars($p['status']) . '</span>
     </td>
-    <td class="divider-v" style="width:24%;">
+    <td class="divider-v" style="width:28%;">
       <span class="info-label">Cut-off Period</span>
-      <span class="cutoff-pill ' . ($start_day <= 15 ? 'cutoff-1st' : 'cutoff-2nd') . '">'
+      <span class="cutoff-pill ' . ($is_first_cutoff ? 'cutoff-1st' : 'cutoff-2nd') . '">'
         . htmlspecialchars($cutoff_str) . '</span>
     </td>
     <td class="divider-v" style="width:18%;">
@@ -603,9 +865,19 @@ td    { vertical-align:middle; }
           . ($pagibig > 0 ? 'P&nbsp;' . fmt($pagibig) : '&mdash;') . '</td>
       </tr>
       <tr class="data-row">
-        <td class="row-label">Tardiness</td>
-        <td class="' . ($tardiness > 0 ? 'row-value-ded' : 'row-value-muted') . '">'
-          . ($tardiness > 0 ? 'P&nbsp;' . fmt($tardiness) : '&mdash;') . '</td>
+        <td class="row-label">Late Deduct</td>
+        <td class="' . ($late_deduct > 0 ? 'row-value-ded' : 'row-value-muted') . '">'
+          . ($late_deduct > 0 ? 'P&nbsp;' . fmt($late_deduct) : '&mdash;') . '</td>
+      </tr>
+      <tr class="data-row">
+        <td class="row-label">Undertime Deduct</td>
+        <td class="' . ($undertime_deduct > 0 ? 'row-value-ded' : 'row-value-muted') . '">'
+          . ($undertime_deduct > 0 ? 'P&nbsp;' . fmt($undertime_deduct) : '&mdash;') . '</td>
+      </tr>
+      <tr class="data-row">
+        <td class="row-label">Halfday Deduct</td>
+        <td class="' . ($halfday_deduct > 0 ? 'row-value-ded' : 'row-value-muted') . '">'
+          . ($halfday_deduct > 0 ? 'P&nbsp;' . fmt($halfday_deduct) : '&mdash;') . '</td>
       </tr>
       <tr class="data-row">
         <td class="row-label">Loan</td>
@@ -617,6 +889,9 @@ td    { vertical-align:middle; }
         <td class="' . ($others_ca > 0 ? 'row-value-ded' : 'row-value-muted') . '">'
           . ($others_ca > 0 ? 'P&nbsp;' . fmt($others_ca) : '&mdash;') . '</td>
       </tr>
+      ' . ($dtrRemarksHtml !== ''
+        ? '<tr class="data-row"><td class="row-label">Remarks</td><td class="row-value" style="text-align:right;font-size:7pt;line-height:1.2;max-width:170px;white-space:normal;color:#475569;">' . $dtrRemarksHtml . '</td></tr>'
+        : '') . '
     </table>
   </td>
 
@@ -629,7 +904,7 @@ td    { vertical-align:middle; }
       <span class="hours-label">Hours Rendered</span>
       <table class="hours-row">
         <tr>
-          <td class="h-reg" style="text-align:right;">' . fmt($work_hours) . '</td>
+          <td class="h-reg" style="text-align:right;">' . fmt($work_hours) . ' hrs</td>
           <td class="h-sep" style="text-align:center;">/</td>
           <td class="h-ot" style="text-align:left;">' . fmt($ot_hours) . ' OT</td>
         </tr>
@@ -661,13 +936,15 @@ td    { vertical-align:middle; }
 <!-- ══ 4. FOOTER ══════════════════════════════════════════════════════════ -->
 <table class="footer-bar">
   <tr>
-    <td style="width:50%;">
-      <span class="sig-label">Received By</span>
-      <span class="sig-line">&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;</span>
+    <td class="footer-left" style="width:50%;">
+      <span class="foot-stamp">Received By</span>
+      <span class="sig-line"></span>
+      <span class="sig-note">Employee Signature and Date</span>
     </td>
-    <td class="divider-v" style="width:50%;">
-      <span class="sig-label">Approved By</span>
-      <span class="sig-name approved-name">Danver S. Reyes</span>
+    <td style="width:50%;">
+      <span class="foot-stamp">Approved By</span>
+      <span class="sig-line"></span>
+      <span class="sig-note">Danver S. Reyes - Authorized Signatory</span>
     </td>
   </tr>
 </table>

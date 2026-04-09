@@ -678,8 +678,20 @@ function generateReceiptHTML(payslip) {
     const loan       = (parseFloat(notes.student_loan || 0)
                       + parseFloat(notes.union_fees   || 0)
                       + parseFloat(notes.pension      || 0));
-    const othersCa   = (parseFloat(notes.other_deductions || 0)
-                      + parseFloat(payslip.other_deductions || 0));
+    const dtrOtherDeduction = parseFloat(notes.dtr_other_deduction || payslip.dtr_other_deduction || 0);
+    const othersCaStored = (parseFloat(notes.other_deductions || 0)
+                          + parseFloat(payslip.other_deductions || 0));
+    const othersCa = othersCaStored > 0 ? othersCaStored : dtrOtherDeduction;
+    const remarksFromNotes = Array.isArray(notes.dtr_remarks_list) ? notes.dtr_remarks_list : [];
+    const remarksFromPayslip = Array.isArray(payslip.dtr_remarks_list) ? payslip.dtr_remarks_list : [];
+    const rawRemarksList = remarksFromNotes.length > 0 ? remarksFromNotes : remarksFromPayslip;
+    const deductionRemarksList = rawRemarksList
+        .map(item => String(item).trim())
+        .filter(item => item !== '');
+    if (deductionRemarksList.length === 0) {
+        const singleRemark = (notes.dtr_remarks || payslip.dtr_remarks || '').toString().trim();
+        if (singleRemark) deductionRemarksList.push(singleRemark);
+    }
 
     const grossPay             = parseFloat(payslip.total_earnings || 0);
     const governmentDeductions = whTax + sss + philhealth + pagibig;
@@ -695,8 +707,17 @@ function generateReceiptHTML(payslip) {
         : new Date(payslip.created_at).toLocaleDateString('en-GB',{day:'2-digit',month:'short',year:'numeric'});
 
     const fmt = v => parseFloat(v).toLocaleString('en-PH', {minimumFractionDigits:2, maximumFractionDigits:2});
+    const escapeHtml = txt => String(txt)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#39;');
     const amtCell = v => v > 0 ? `<span style="font-weight:700;color:#0f3460;">P ${fmt(v)}</span>` : `<span style="color:#94a3b8;">&mdash;</span>`;
     const dedCell = v => v > 0 ? `<span style="font-weight:700;color:#dc2626;">P ${fmt(v)}</span>` : `<span style="color:#94a3b8;">&mdash;</span>`;
+    const remarksCell = items => (Array.isArray(items) && items.length > 0)
+        ? `<span style="display:inline-block;max-width:170px;text-align:right;color:#475569;font-size:7pt;line-height:1.2;white-space:normal;">${items.map(item => `&#8226; ${escapeHtml(item)}`).join('<br>')}</span>`
+        : `<span style="color:#94a3b8;">&mdash;</span>`;
 
     return `
     <style>
@@ -825,6 +846,7 @@ function generateReceiptHTML(payslip) {
           <tr class="tb5-dr"><td class="tb5-rl">Halfday Deduct</td> <td style="text-align:right;">${dedCell(halfdayDeduct)}</td></tr>
           <tr class="tb5-dr"><td class="tb5-rl">Loan</td>           <td style="text-align:right;">${dedCell(loan)}</td></tr>
           <tr class="tb5-dr"><td class="tb5-rl">Others / C.A.</td>  <td style="text-align:right;">${dedCell(othersCa)}</td></tr>
+                                        ${deductionRemarksList.length > 0 ? `<tr class="tb5-dr"><td class="tb5-rl">Remarks</td><td style="text-align:right;">${remarksCell(deductionRemarksList)}</td></tr>` : ''}
         </table>
       </td>
 

@@ -119,6 +119,44 @@ $startDate = $periodInfo['start_date'] ?? min($dates);
 $endDate   = $periodInfo['end_date']   ?? max($dates);
 $salary    = floatval($employee['basic_monthly_salary']);
 
+// Late equivalency rules (default is 1:1 when no valid rules are configured)
+$lateRuleItems = [];
+try {
+    $lateRuleStmt = $pdo->prepare("SELECT * FROM payroll_rule_settings WHERE id = 1 LIMIT 1");
+    $lateRuleStmt->execute();
+    $lateRule = $lateRuleStmt->fetch(PDO::FETCH_ASSOC) ?: [];
+
+    for ($i = 1; $i <= 3; $i++) {
+        $actualMinutes = floatval($lateRule["late_rule_{$i}_actual_minutes"] ?? 0);
+        $chargedMinutes = floatval($lateRule["late_rule_{$i}_equivalent_minutes"] ?? 0);
+        if ($actualMinutes > 0 && $chargedMinutes > 0) {
+            $lateRuleItems[] = [
+                'actual' => $actualMinutes,
+                'multiplier' => $chargedMinutes / $actualMinutes,
+            ];
+        }
+    }
+} catch (\Throwable $e) {
+    $lateRuleItems = [];
+}
+
+usort($lateRuleItems, static function ($a, $b) {
+    return ($a['actual'] <=> $b['actual']);
+});
+
+$resolveEquivalentLateMinutes = static function (float $lateMins, array $rules): float {
+    if ($lateMins <= 0) {
+        return 0.0;
+    }
+    $multiplier = 1.0;
+    foreach ($rules as $rule) {
+        if ($lateMins >= floatval($rule['actual'] ?? 0)) {
+            $multiplier = floatval($rule['multiplier'] ?? 1.0);
+        }
+    }
+    return $lateMins * $multiplier;
+};
+
 // Govt deduction amounts (from payroll_computations or fallback from remarks)
 $sssAmt  = $comp ? floatval($comp['sss_contribution']        ?? 0) : 0;
 $philAmt = $comp ? floatval($comp['philhealth_contribution']  ?? 0) : 0;
@@ -382,8 +420,8 @@ foreach ($datePeriod as $dt) {
 
     // O: Absent deduction
     $sheet->setCellValue("O{$dataRow}", $isAbsent ? $dailyRate : 0);
-    // P: Late deduction = late_minutes * per_min
-    $lateDeduct = $dbLateMins * $perMin;
+    // P: Late deduction uses configured tiered late equivalency rules.
+    $lateDeduct = $resolveEquivalentLateMinutes($dbLateMins, $lateRuleItems) * $perMin;
     $sheet->setCellValue("P{$dataRow}", round($lateDeduct, 2));
     // Q: Undertime deduction = undertime_hours * hourly_rate
     $utDeduct = $dbUtHours * $hourlyRate;

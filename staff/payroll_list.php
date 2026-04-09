@@ -15,16 +15,22 @@ $html = ob_get_clean();
 
 $search = [
     'href="dashboard.php"',
+    'backup_api.php?action=get_salary_rules',
     'get_employee_dtr_months.php',
     'get_employee_dtr_data.php',
+    'get_employee_payslips.php',
     'save_cutoff_payslip.php',
+    'generate_payslip_pdf.php?payslip_id=',
 ];
 
 $replace = [
     'href="dashboard_staff.php"',
+    'get_salary_rules.php',
     '../admin/get_employee_dtr_months.php',
     '../admin/get_employee_dtr_data.php',
+    '../admin/get_employee_payslips.php',
     '../admin/save_cutoff_payslip.php',
+    '../admin/generate_payslip_pdf.php?payslip_id=',
 ];
 
 $html = str_replace($search, $replace, $html);

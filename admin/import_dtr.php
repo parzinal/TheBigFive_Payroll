@@ -1013,7 +1013,8 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
         }
     }
 
-        // Compute or read OT rate (template places OT RATE in L2 as formula)
+        // Read OT rate only when explicitly provided as a non-formula value.
+        // Do not auto-derive OT from formulas or per-day defaults.
         if ($employeeInfo['ot_rate'] == 0) {
             // Try direct worksheet cell first (L2 or other common positions)
             $otCandidates = ['L', 'P'];
@@ -1021,12 +1022,18 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
                 if ($worksheet !== null) {
                     try {
                         $cell = $worksheet->getCell($otCol . '2');
-                        $val = $cell ? $cell->getCalculatedValue() : null;
+                        // Ignore formula-driven OT values so OT stays manual unless explicitly set.
+                        if ($cell && method_exists($cell, 'isFormula') && $cell->isFormula()) {
+                            continue;
+                        }
+
+                        $val = $cell ? $cell->getValue() : null;
                         if ($val !== null && $val !== '' && is_numeric($val)) {
                             $employeeInfo['ot_rate'] = floatval($val);
                             break;
                         }
-                        // Try formatted value
+
+                        // Try formatted value for plain numeric text cells
                         $fmt = $cell ? $cell->getFormattedValue() : null;
                         if ($fmt !== null && $fmt !== '') {
                             $clean = floatval(preg_replace('/[^0-9.]/', '', $fmt));
@@ -1039,19 +1046,14 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
                         // ignore and continue
                     }
                 }
-                // Fallback to array value (row2)
-                if (isset($row2[$otCol])) {
+                // Fallback to array value (row2) only when worksheet object is unavailable.
+                if ($worksheet === null && isset($row2[$otCol])) {
                     $clean = floatval(preg_replace('/[^0-9.]/', '', $row2[$otCol] ?? ''));
                     if ($clean > 0) {
                         $employeeInfo['ot_rate'] = $clean;
                         break;
                     }
                 }
-            }
-
-            // If still not found, compute from per_day_rate using template formula: OT = (per_day/8) * 1.25
-            if ($employeeInfo['ot_rate'] == 0 && $employeeInfo['per_day_rate'] > 0) {
-                $employeeInfo['ot_rate'] = floatval($employeeInfo['per_day_rate']) / 8.0 * 1.25;
             }
         }
     
@@ -1114,7 +1116,7 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
 
     if ($detectTB5) {
         // Detect OLD vs NEW TB5 column layout:
-        // OLD (simplified): A=Date, B=AM IN, C=PM OUT, D=ABSENT, E=TRAINING, F=OT OUT, ..., W=REMARKS
+        // OLD (simplified): A=Date, B=AM IN, C=PM OUT, D=ABSENT, E=TRAINING, F=OT OUT, ..., V=REMARKS, W=SHIFT 1, X=SHIFT 2
         // NEW (full/export): A=Date, B=AM IN, C=AM OUT, D=PM IN, E=PM OUT, F=ABSENT, G=OT OUT, ..., Z=REMARKS
         // Detection: In the NEW format, column F row 4 = 'ABSENT'. In the OLD format, D = 'ABSENT'.
         $fKey = $hasLetterKeys ? 'F' : 5;
@@ -1152,7 +1154,9 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
                 'late_minutes' => $hasLetterKeys ? 'H' : 7,    // Column H - LATE (in minutes)
                 'undertime_hours' => $hasLetterKeys ? 'I' : 8, // Column I - UNDERTM (in hours)
                 'daily_ot_hours' => $hasLetterKeys ? 'J' : 9,  // Column J - OT
-                'remarks' => $hasLetterKeys ? 'V' : 21         // Column V - REMARKS
+                'remarks' => $hasLetterKeys ? 'V' : 21,        // Column V - REMARKS
+                'shift_1_selector' => $hasLetterKeys ? 'W' : 22, // Column W - SHIFT 1
+                'shift_2_selector' => $hasLetterKeys ? 'X' : 23  // Column X - SHIFT 2
             ];
         }
     } else {
@@ -1192,6 +1196,10 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
                         $columnMap['is_training'] = $col;
                     } elseif (in_array($header, ['ot out', 'ot_out', 'overtime out', 'ot'])) {
                         $columnMap['ot_time_out'] = $col;
+                    } elseif (in_array($header, ['shift 1', 'shift1', 'shift-1', 's1'])) {
+                        $columnMap['shift_1_selector'] = $col;
+                    } elseif (in_array($header, ['shift 2', 'shift2', 'shift-2', 's2'])) {
+                        $columnMap['shift_2_selector'] = $col;
                     } elseif (in_array($header, ['remarks', 'notes'])) {
                         $columnMap['remarks'] = $col;
                     }
@@ -1228,6 +1236,51 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
         }
         return null;
     };
+
+    // Read a cell from formatted rows, then raw rows, then worksheet direct value.
+    $getCellFromSources = function($rowNum, $row, $colKey) use ($getCell, $rowsRaw, $worksheet) {
+        $value = $getCell($row, $colKey);
+
+        if (($value === null || $value === '') && $rowsRaw !== null && isset($rowsRaw[$rowNum])) {
+            if (array_key_exists($colKey, $rowsRaw[$rowNum])) {
+                $value = $rowsRaw[$rowNum][$colKey];
+            }
+        }
+
+        if (($value === null || $value === '') && $worksheet !== null && is_string($colKey)) {
+            try {
+                $wsValue = $worksheet->getCell($colKey . $rowNum)->getValue();
+                if ($wsValue !== null && $wsValue !== '') {
+                    $value = $wsValue;
+                }
+            } catch (\Exception $e) {
+                // Ignore and return best-effort value from other sources.
+            }
+        }
+
+        return $value;
+    };
+
+    $parseMarkedFlag = function($value) {
+        if ($value === null || $value === '') {
+            return false;
+        }
+
+        if (is_bool($value)) {
+            return $value;
+        }
+
+        if (is_numeric($value)) {
+            return floatval($value) > 0;
+        }
+
+        $normalized = strtolower(trim((string)$value));
+        if ($normalized === '') {
+            return false;
+        }
+
+        return !in_array($normalized, ['0', 'no', 'n', 'false', 'off', 'none', 'na', 'n/a'], true);
+    };
     
     // Input column keys for TB5 format (user-editable cells)
     if ($isNewTB5Format) {
@@ -1236,10 +1289,10 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
             ? ['B', 'C', 'D', 'E', 'F', 'G', 'H', 'I'] 
             : [1, 2, 3, 4, 5, 6, 7, 8];
     } else {
-        // Old format: B=AM IN, C=PM OUT, D=Absent, E=Training, F=OT OUT, H-I=Halfday
+        // Old format: B=AM IN, C=PM OUT, D=Absent, E=Training, F=OT OUT, W=Shift 1, X=Shift 2, H-I=Halfday
         $inputCols = $hasLetterKeys 
-            ? ['B', 'C', 'D', 'E', 'F', 'H', 'I'] 
-            : [1, 2, 3, 4, 5, 7, 8];
+            ? ['B', 'C', 'D', 'E', 'F', 'H', 'I', 'W', 'X'] 
+            : [1, 2, 3, 4, 5, 7, 8, 22, 23];
     }
     
     foreach ($rows as $rowNum => $row) {
@@ -1371,6 +1424,10 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
         $firstCell = strtolower(trim($getCell($row, $firstCellKey) ?? ''));
         if (in_array($firstCell, ['total', 'total:', 'sum', 'totals', 'grand total'])) {
             $dataSkippedRows[] = "Row $rowNum: totals row";
+            // For TB5 layouts, anything below TOTALS is summary metadata, not DTR day rows.
+            if ($detectTB5) {
+                break;
+            }
             continue;
         }
         
@@ -1378,6 +1435,13 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
         $dateKey = $columnMap['dtr_date'] ?? ($hasLetterKeys ? 'A' : 0);
         $dateValue = $getCell($row, $dateKey);
         $parsedDate = parseDate($dateValue);
+
+        // In TB5, skip rows with no date and no editable-input data.
+        // This prevents formula-only/summary rows from being auto-converted into fake dates.
+        if ($detectTB5 && empty($parsedDate) && !$hasInputData) {
+            $dataSkippedRows[] = "Row $rowNum: no date and no input data";
+            continue;
+        }
         
         // TB5 AUTO-DATE: If date is missing but we're in TB5 format, generate date from row position
         if (empty($parsedDate) && $detectTB5) {
@@ -1415,6 +1479,14 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
             $dataSkippedRows[] = "Row $rowNum: no valid date (raw=" . var_export($dateValue, true) . ")";
             continue;
         }
+
+        // If a payroll period was explicitly selected, enforce strict period boundaries.
+        if (!empty($periodStart) && !empty($periodEnd)) {
+            if ($parsedDate < $periodStart || $parsedDate > $periodEnd) {
+                $dataSkippedRows[] = "Row $rowNum: date {$parsedDate} outside selected period {$periodStart} to {$periodEnd}";
+                continue;
+            }
+        }
         
         $processedRows++;
         
@@ -1427,6 +1499,7 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
             'pm_time_out' => null,
             'is_absent' => 0,
             'is_training' => 0,
+            'day_override_enabled' => 0,
             'ot_time_out' => null,
             'halfday_in' => null,
             'halfday_out' => null,
@@ -1527,6 +1600,21 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
                 $record['is_training'] = 1;
             }
         }
+
+        // Shift selector import support:
+        // - Marking Shift 2 enables day override for that row.
+        // - Shift 1 (or both blank) defaults to no day override.
+        $shift1Marked = false;
+        $shift2Marked = false;
+
+        if (isset($columnMap['shift_1_selector'])) {
+            $shift1Marked = $parseMarkedFlag($getCellFromSources($rowNum, $row, $columnMap['shift_1_selector']));
+        }
+        if (isset($columnMap['shift_2_selector'])) {
+            $shift2Marked = $parseMarkedFlag($getCellFromSources($rowNum, $row, $columnMap['shift_2_selector']));
+        }
+
+        $record['day_override_enabled'] = $shift2Marked ? 1 : 0;
         
         // Parse numeric fields (calculated values from Excel)
         $numericFields = ['total_work_hours', 'late_minutes', 'undertime_hours', 'daily_ot_hours'];
@@ -1546,21 +1634,31 @@ function extractAllDataFromRows($rows, $hasLetterKeys = true, $periodStart = nul
         // Parse trainee columns — only for OLD format where X=count, Y=per-trainee, Z=total
         // In NEW format, X=Gov't, Y=Salary, Z=Remarks (no per-row trainee data)
         if (!$isNewTB5Format) {
-            $traineeCountKey = $hasLetterKeys ? 'X' : 23;
-            $traineePayKey   = $hasLetterKeys ? 'Y' : 24;
-            $traineeTotalKey = $hasLetterKeys ? 'Z' : 25;
-            
-            $traineeCount = floatval($getCell($row, $traineeCountKey) ?? 0);
-            $traineePayPerUnit = floatval($getCell($row, $traineePayKey) ?? 0);
-            $traineeTotal = floatval($getCell($row, $traineeTotalKey) ?? 0);
-            
-            if ($traineeTotal == 0 && $traineeCount > 0 && $traineePayPerUnit > 0) {
-                $traineeTotal = $traineeCount * $traineePayPerUnit;
+            $hasShiftSelectors = isset($columnMap['shift_1_selector']) || isset($columnMap['shift_2_selector']);
+
+            if ($hasShiftSelectors) {
+                // Current simplified template reserves W/X for Shift 1/Shift 2 selectors.
+                // Disable legacy trainee-column parsing to avoid cross-field collisions.
+                $record['trainee_count']     = 0;
+                $record['trainee_pay_each']  = 0;
+                $record['trainee_total_pay'] = 0;
+            } else {
+                $traineeCountKey = $hasLetterKeys ? 'X' : 23;
+                $traineePayKey   = $hasLetterKeys ? 'Y' : 24;
+                $traineeTotalKey = $hasLetterKeys ? 'Z' : 25;
+
+                $traineeCount = floatval($getCell($row, $traineeCountKey) ?? 0);
+                $traineePayPerUnit = floatval($getCell($row, $traineePayKey) ?? 0);
+                $traineeTotal = floatval($getCell($row, $traineeTotalKey) ?? 0);
+
+                if ($traineeTotal == 0 && $traineeCount > 0 && $traineePayPerUnit > 0) {
+                    $traineeTotal = $traineeCount * $traineePayPerUnit;
+                }
+
+                $record['trainee_count']     = (int)$traineeCount;
+                $record['trainee_pay_each']  = round($traineePayPerUnit, 2);
+                $record['trainee_total_pay'] = round($traineeTotal, 2);
             }
-            
-            $record['trainee_count']     = (int)$traineeCount;
-            $record['trainee_pay_each']  = round($traineePayPerUnit, 2);
-            $record['trainee_total_pay'] = round($traineeTotal, 2);
         } else {
             $record['trainee_count']     = 0;
             $record['trainee_pay_each']  = 0;

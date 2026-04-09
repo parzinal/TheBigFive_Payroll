@@ -89,6 +89,20 @@ if (!$data || empty($data['employee_id']) || empty($data['period_id']) || empty(
 $employeeId  = intval($data['employee_id']);
 $periodId    = intval($data['period_id']);
 $cutoffType  = in_array($data['cutoff_type'], ['first', 'second']) ? $data['cutoff_type'] : null;
+$otherDeductions = floatval($data['other_deductions'] ?? 0);
+$deductionRemarks = trim((string)($data['deduction_remarks'] ?? ''));
+$deductionRemarksList = $data['deduction_remarks_list'] ?? [];
+if (!is_array($deductionRemarksList)) {
+    $deductionRemarksList = [];
+}
+$deductionRemarksList = array_values(array_unique(array_filter(array_map(static function ($value) {
+    return trim((string)$value);
+}, $deductionRemarksList), static function ($value) {
+    return $value !== '';
+})));
+if ($deductionRemarks === '' && !empty($deductionRemarksList)) {
+    $deductionRemarks = implode(' | ', $deductionRemarksList);
+}
 
 if (!$cutoffType) {
     ob_end_clean();
@@ -99,9 +113,16 @@ if (!$cutoffType) {
 // Build notes JSON (carries cutoff_type + ot_rate for payslip PDF)
 $notes = [
     'cutoff_type'  => $cutoffType,
-    'cutoff_label' => $data['cutoff_label'] ?? ($cutoffType === 'first' ? '1st Cutoff (Day 1-15)' : '2nd Cutoff (Day 16-End)'),
+    'cutoff_label' => $data['cutoff_label'] ?? ($cutoffType === 'first' ? '1st Cutoff (Prev 28 - Curr 12)' : '2nd Cutoff (Curr 13 - 27)'),
     'ot_rate'      => floatval($data['ot_rate'] ?? 0),
     'source_computation_id' => intval($data['source_computation_id'] ?? 0),
+    'dtr_remarks' => $deductionRemarks,
+    'dtr_remarks_list' => $deductionRemarksList,
+    'dtr_other_deduction' => $otherDeductions,
+    'dtr_withholding_tax' => floatval($data['withholding_tax'] ?? 0),
+    'dtr_sss' => floatval($data['sss_contribution'] ?? 0),
+    'dtr_philhealth' => floatval($data['philhealth_contribution'] ?? 0),
+    'dtr_pagibig' => floatval($data['pagibig_contribution'] ?? 0),
     'dtr_data' => [
         'late_deduct'      => floatval($data['late_deduct'] ?? 0),
         'undertime_deduct' => floatval($data['undertime_deduct'] ?? 0),
@@ -131,12 +152,13 @@ try {
     $utDed         = floatval($data['undertime_deduct'] ?? 0);
     $absentDed     = floatval($data['absent_deduct']   ?? 0);
     $halfDed       = floatval($data['halfday_deduct']  ?? 0);
+    $withholdingTax = floatval($data['withholding_tax'] ?? 0);
     $sss           = floatval($data['sss_contribution'] ?? 0);
     $philhealth    = floatval($data['philhealth_contribution'] ?? 0);
     $pagibig       = floatval($data['pagibig_contribution'] ?? 0);
     $trainCost     = floatval($data['trainings_cost']  ?? 0);
     $totalEarnings = floatval($data['total_earnings']  ?? ($basicPay + $otPay + $trainCost));
-    $totalDed      = floatval($data['total_deductions'] ?? ($halfDed + $sss + $philhealth + $pagibig));
+    $totalDed      = floatval($data['total_deductions'] ?? ($halfDed + $withholdingTax + $sss + $philhealth + $pagibig));
     $netPay        = floatval($data['net_pay']          ?? ($totalEarnings - $totalDed));
     $daysWorked    = intval($data['days_worked']        ?? 0);
     $absentDays    = intval($data['absent_days']        ?? 0);
@@ -177,7 +199,8 @@ try {
                 total_absent_days = ?,
                 basic_pay = ?, ot_pay = ?,
                 late_deduction = ?, undertime_deduction = ?, absent_deduction = ?,
-                sss_contribution = ?, philhealth_contribution = ?, pagibig_contribution = ?,
+                withholding_tax = ?, sss_contribution = ?, philhealth_contribution = ?, pagibig_contribution = ?,
+                other_deductions = ?,
                 trainings_cost = ?, training_amount = ?,
                 total_earnings = ?, total_deductions = ?, net_pay = ?,
                     other_deductions_notes = ?,
@@ -209,7 +232,9 @@ try {
             $absentDays,
             $basicPay, $otPay,
             $lateDed, $utDed, $absentDed,
+            $withholdingTax,
             $sss, $philhealth, $pagibig,
+            $otherDeductions,
             $trainCost, $trainCost,
             $totalEarnings, $totalDed, $netPay,
                 json_encode($mergedNotes),
@@ -248,13 +273,14 @@ try {
                 total_absent_days,
                 basic_pay, ot_pay,
                 late_deduction, undertime_deduction, absent_deduction,
-                sss_contribution, philhealth_contribution, pagibig_contribution,
+                withholding_tax, sss_contribution, philhealth_contribution, pagibig_contribution,
+                other_deductions,
                 trainings_cost, training_amount,
                 total_earnings, total_deductions, net_pay,
                 other_deductions_notes,
                 status, computed_at, computed_by, created_at, updated_at
             ) VALUES (
-                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'computed', NOW(), ?, NOW(), NOW()
+                ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'computed', NOW(), ?, NOW(), NOW()
             )"
         );
 
@@ -266,7 +292,9 @@ try {
             $absentDays,
             $basicPay, $otPay,
             $lateDed, $utDed, $absentDed,
+            $withholdingTax,
             $sss, $philhealth, $pagibig,
+            $otherDeductions,
             $trainCost, $trainCost,
             $totalEarnings, $totalDed, $netPay,
             json_encode($notes),

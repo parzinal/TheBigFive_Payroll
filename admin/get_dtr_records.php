@@ -30,16 +30,21 @@ if ($checkPeriods && $employeeId && $year && $month) {
     try {
         $pdo = getDBConnection();
         
-        // Create date ranges for both periods
+        // Create date ranges for both company cutoff periods
         $monthStr = str_pad($month, 2, '0', STR_PAD_LEFT);
-        $lastDay = date('t', strtotime("$year-$monthStr-01"));
+        $selectedMonthDate = strtotime("$year-$monthStr-01");
+        $prevMonthYear = date('Y', strtotime('-1 month', $selectedMonthDate));
+        $prevMonth = date('m', strtotime('-1 month', $selectedMonthDate));
+
+        // 1st cut-off: previous month 28 to selected month 12
+        $period1Start = "$prevMonthYear-$prevMonth-28";
+        $period1End = "$year-$monthStr-12";
+
+        // 2nd cut-off: selected month 13 to 27
+        $period2Start = "$year-$monthStr-13";
+        $period2End = "$year-$monthStr-27";
         
-        $period1Start = "$year-$monthStr-01";
-        $period1End = "$year-$monthStr-15";
-        $period2Start = "$year-$monthStr-16";
-        $period2End = "$year-$monthStr-$lastDay";
-        
-        // Check for records in first period (1-15)
+        // Check for records in first cutoff period (prev 28-current 12)
         $stmt = $pdo->prepare("
             SELECT COUNT(*) as count 
             FROM dtr_records 
@@ -49,7 +54,7 @@ if ($checkPeriods && $employeeId && $year && $month) {
         $stmt->execute([$employeeId, $period1Start, $period1End]);
         $period1Exists = $stmt->fetch()['count'] > 0;
         
-        // Check for records in second period (16-end)
+        // Check for records in second cutoff period (13-27)
         $stmt->execute([$employeeId, $period2Start, $period2End]);
         $period2Exists = $stmt->fetch()['count'] > 0;
         

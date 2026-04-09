@@ -125,6 +125,9 @@ try {
             <button class="tab-btn active" data-tab="backup-settings" onclick="switchTab('backup-settings')">
                 <i class="fas fa-cog"></i> Backup Settings
             </button>
+            <button class="tab-btn" data-tab="rules" onclick="switchTab('rules')">
+                <i class="fas fa-balance-scale"></i> Rules
+            </button>
             <button class="tab-btn" data-tab="manual-backup" onclick="switchTab('manual-backup')">
                 <i class="fas fa-download"></i> Manual Backup
             </button>
@@ -323,7 +326,141 @@ try {
         </div>
 
         <!-- ============================================= -->
-        <!-- TAB 2: MANUAL BACKUP                          -->
+        <!-- TAB 2: SALARY RULES                           -->
+        <!-- ============================================= -->
+        <div class="tab-content" id="tab-rules">
+            <div class="settings-card">
+                <div class="settings-card-header">
+                    <div class="settings-card-title">
+                        <i class="fas fa-balance-scale"></i>
+                        <h3>Payroll Shift Rules</h3>
+                    </div>
+                    <p class="settings-card-desc">Configure Shift 1 and Shift 2 defaults for Per Day rate, OT rate, Time In, and Time Out, plus a custom Late Equivalency rule used in Generate Payroll and the DTR calculator.</p>
+                </div>
+                <div class="settings-card-body">
+                    <form id="salaryRulesForm" onsubmit="return saveSalaryRules(event)">
+                        <div class="rules-grid">
+                            <div class="rule-card">
+                                <div class="rule-card-header">
+                                    <h4><i class="fas fa-sun"></i> Shift 1</h4>
+                                    <small>Primary shift defaults</small>
+                                </div>
+                                <input type="hidden" name="shift_1_name" value="Shift 1">
+                                <div class="rule-fields">
+                                    <div class="rule-field">
+                                        <label for="shift_1_per_day_rate">Per Day Rate</label>
+                                        <input type="number" min="0" step="0.01" class="form-input-modern" id="shift_1_per_day_rate" name="shift_1_per_day_rate" value="0.00" required>
+                                    </div>
+                                    <div class="rule-field">
+                                        <label for="shift_1_ot_rate">OT Rate</label>
+                                        <input type="number" min="0" step="0.01" class="form-input-modern" id="shift_1_ot_rate" name="shift_1_ot_rate" value="0.00" required>
+                                    </div>
+                                    <div class="rule-field-row">
+                                        <div class="rule-field">
+                                            <label for="shift_1_time_in">Time In</label>
+                                            <input type="text" class="form-input-modern rules-time-input" id="shift_1_time_in" name="shift_1_time_in" value="08:00" placeholder="08:00" maxlength="5" inputmode="numeric" required>
+                                        </div>
+                                        <div class="rule-field">
+                                            <label for="shift_1_time_out">Time Out</label>
+                                            <input type="text" class="form-input-modern rules-time-input" id="shift_1_time_out" name="shift_1_time_out" value="17:00" placeholder="17:00" maxlength="5" inputmode="numeric" required>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="rule-card">
+                                <div class="rule-card-header">
+                                    <h4><i class="fas fa-moon"></i> Shift 2</h4>
+                                    <small>Alternative shift defaults</small>
+                                </div>
+                                <input type="hidden" name="shift_2_name" value="Shift 2">
+                                <div class="rule-fields">
+                                    <div class="rule-field">
+                                        <label for="shift_2_per_day_rate">Per Day Rate</label>
+                                        <input type="number" min="0" step="0.01" class="form-input-modern" id="shift_2_per_day_rate" name="shift_2_per_day_rate" value="0.00" required>
+                                    </div>
+                                    <div class="rule-field">
+                                        <label for="shift_2_ot_rate">OT Rate</label>
+                                        <input type="number" min="0" step="0.01" class="form-input-modern" id="shift_2_ot_rate" name="shift_2_ot_rate" value="0.00" required>
+                                    </div>
+                                    <div class="rule-field-row">
+                                        <div class="rule-field">
+                                            <label for="shift_2_time_in">Time In</label>
+                                            <input type="text" class="form-input-modern rules-time-input" id="shift_2_time_in" name="shift_2_time_in" value="08:00" placeholder="08:00" maxlength="5" inputmode="numeric" required>
+                                        </div>
+                                        <div class="rule-field">
+                                            <label for="shift_2_time_out">Time Out</label>
+                                            <input type="text" class="form-input-modern rules-time-input" id="shift_2_time_out" name="shift_2_time_out" value="17:00" placeholder="17:00" maxlength="5" inputmode="numeric" required>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="rule-card late-equivalency-card">
+                                <div class="rule-card-header">
+                                    <h4><i class="fas fa-hourglass-half"></i> Late Equivalency</h4>
+                                    <small>Set up to 3 late rules (for example: 5 =&gt; 20, 10 =&gt; 30, 60 =&gt; 240)</small>
+                                </div>
+                                <div class="rule-fields">
+                                    <div class="rule-field-row late-equivalency-row">
+                                        <div class="rule-field">
+                                            <label for="late_rule_1_actual_minutes">Rule 1 Actual Late (minutes)</label>
+                                            <input type="number" min="0.01" step="0.01" class="form-input-modern" id="late_rule_1_actual_minutes" name="late_rule_1_actual_minutes" placeholder="e.g. 5">
+                                        </div>
+                                        <div class="rule-field late-equivalency-equals">
+                                            <span>=</span>
+                                        </div>
+                                        <div class="rule-field">
+                                            <label for="late_rule_1_equivalent_minutes">Rule 1 Equivalent Deducted (minutes)</label>
+                                            <input type="number" min="0.01" step="0.01" class="form-input-modern" id="late_rule_1_equivalent_minutes" name="late_rule_1_equivalent_minutes" placeholder="e.g. 20">
+                                        </div>
+                                    </div>
+
+                                    <div class="rule-field-row late-equivalency-row">
+                                        <div class="rule-field">
+                                            <label for="late_rule_2_actual_minutes">Rule 2 Actual Late (minutes)</label>
+                                            <input type="number" min="0.01" step="0.01" class="form-input-modern" id="late_rule_2_actual_minutes" name="late_rule_2_actual_minutes" placeholder="e.g. 10">
+                                        </div>
+                                        <div class="rule-field late-equivalency-equals">
+                                            <span>=</span>
+                                        </div>
+                                        <div class="rule-field">
+                                            <label for="late_rule_2_equivalent_minutes">Rule 2 Equivalent Deducted (minutes)</label>
+                                            <input type="number" min="0.01" step="0.01" class="form-input-modern" id="late_rule_2_equivalent_minutes" name="late_rule_2_equivalent_minutes" placeholder="e.g. 30">
+                                        </div>
+                                    </div>
+
+                                    <div class="rule-field-row late-equivalency-row">
+                                        <div class="rule-field">
+                                            <label for="late_rule_3_actual_minutes">Rule 3 Actual Late (minutes)</label>
+                                            <input type="number" min="0.01" step="0.01" class="form-input-modern" id="late_rule_3_actual_minutes" name="late_rule_3_actual_minutes" placeholder="e.g. 60">
+                                        </div>
+                                        <div class="rule-field late-equivalency-equals">
+                                            <span>=</span>
+                                        </div>
+                                        <div class="rule-field">
+                                            <label for="late_rule_3_equivalent_minutes">Rule 3 Equivalent Deducted (minutes)</label>
+                                            <input type="number" min="0.01" step="0.01" class="form-input-modern" id="late_rule_3_equivalent_minutes" name="late_rule_3_equivalent_minutes" placeholder="e.g. 240">
+                                        </div>
+                                    </div>
+
+                                    <p class="late-equivalency-preview" id="late_equivalency_preview">No late equivalency rules set. Late deduction will follow actual late minutes.</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="settings-actions">
+                            <button type="submit" class="btn-primary-modern" id="saveSalaryRulesBtn">
+                                <i class="fas fa-save"></i> Save Rules
+                            </button>
+                        </div>
+                    </form>
+                </div>
+            </div>
+        </div>
+
+        <!-- ============================================= -->
+        <!-- TAB 3: MANUAL BACKUP                          -->
         <!-- ============================================= -->
         <div class="tab-content" id="tab-manual-backup">
             <div class="settings-card">
@@ -401,7 +538,7 @@ try {
         </div>
 
         <!-- ============================================= -->
-        <!-- TAB 3: BACKUP HISTORY                         -->
+        <!-- TAB 4: BACKUP HISTORY                         -->
         <!-- ============================================= -->
         <div class="tab-content" id="tab-backup-history">
             <div class="settings-card">
@@ -452,7 +589,7 @@ try {
         </div>
 
         <!-- ============================================= -->
-        <!-- TAB 4: RESTORE                                -->
+        <!-- TAB 5: RESTORE                                -->
         <!-- ============================================= -->
         <div class="tab-content" id="tab-restore">
             <div class="settings-card">
@@ -791,6 +928,104 @@ try {
 
 .settings-card-body {
     padding: 1.5rem;
+}
+
+/* Salary Rules */
+.rules-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 1rem;
+}
+
+.rule-card {
+    border: 1px solid #e2e8f0;
+    border-radius: 12px;
+    background: #f8fafc;
+    padding: 1rem;
+}
+
+.rule-card-header {
+    margin-bottom: 0.75rem;
+}
+
+.rule-card-header h4 {
+    margin: 0;
+    color: #1e293b;
+    font-size: 16px;
+    display: flex;
+    align-items: center;
+    gap: 0.5rem;
+}
+
+.rule-card-header small {
+    color: #64748b;
+}
+
+.rule-fields {
+    display: grid;
+    gap: 0.75rem;
+}
+
+.rule-field-row {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0.75rem;
+}
+
+.rule-field {
+    min-width: 0;
+}
+
+.rule-field .form-input-modern {
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.late-equivalency-card {
+    grid-column: 1 / -1;
+}
+
+.late-equivalency-row {
+    grid-template-columns: minmax(200px, 1fr) auto minmax(200px, 1fr);
+    align-items: end;
+}
+
+.late-equivalency-equals {
+    min-width: 36px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+}
+
+.late-equivalency-equals span {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 28px;
+    height: 28px;
+    border-radius: 50%;
+    background: #dbeafe;
+    color: #1d4ed8;
+    font-weight: 700;
+}
+
+.late-equivalency-preview {
+    margin: 0;
+    padding: 0.625rem 0.75rem;
+    border-radius: 8px;
+    border: 1px solid #dbeafe;
+    background: #eff6ff;
+    color: #1e40af;
+    font-size: 13px;
+    line-height: 1.5;
+}
+
+.rule-field label {
+    display: block;
+    margin-bottom: 0.25rem;
+    font-size: 13px;
+    font-weight: 600;
+    color: #334155;
 }
 
 /* Setting Rows */
@@ -1777,6 +2012,14 @@ try {
     .restore-warning {
         flex-direction: column;
     }
+
+    .rule-field-row {
+        grid-template-columns: 1fr;
+    }
+
+    .late-equivalency-equals {
+        display: none;
+    }
 }
 
 @media (max-width: 480px) {
@@ -1805,6 +2048,7 @@ try {
 
 // Global variable to track selected file
 let selectedRestoreFile = null;
+let salaryRulesLoaded = false;
 
 // =============================================
 // TAB SWITCHING
@@ -1824,6 +2068,9 @@ function switchTab(tabId) {
     }
     if (tabId === 'restore') {
         loadBackupOptions();
+    }
+    if (tabId === 'rules') {
+        loadSalaryRules();
     }
 }
 
@@ -1893,6 +2140,240 @@ function saveSettings(event) {
         btn.disabled = false;
     });
     
+    return false;
+}
+
+// =============================================
+// SALARY RULES
+// =============================================
+function setSalaryRulesFormValues(rules) {
+    const shift1 = rules?.shift_1 || {};
+    const shift2 = rules?.shift_2 || {};
+
+    const setVal = (id, value, fallback = '') => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.value = (value ?? fallback);
+    };
+
+    setVal('shift_1_per_day_rate', Number(shift1.per_day_rate ?? 0).toFixed(2), '0.00');
+    setVal('shift_1_ot_rate', Number(shift1.ot_rate ?? 0).toFixed(2), '0.00');
+    setVal('shift_1_time_in', normalizeRuleTime24(shift1.time_in, '08:00'), '08:00');
+    setVal('shift_1_time_out', normalizeRuleTime24(shift1.time_out, '17:00'), '17:00');
+
+    setVal('shift_2_per_day_rate', Number(shift2.per_day_rate ?? 0).toFixed(2), '0.00');
+    setVal('shift_2_ot_rate', Number(shift2.ot_rate ?? 0).toFixed(2), '0.00');
+    setVal('shift_2_time_in', normalizeRuleTime24(shift2.time_in, '08:00'), '08:00');
+    setVal('shift_2_time_out', normalizeRuleTime24(shift2.time_out, '17:00'), '17:00');
+
+    const lateRules = Array.isArray(rules?.late_rules) ? rules.late_rules : [];
+    for (let i = 1; i <= 3; i++) {
+        const item = lateRules[i - 1] || {};
+        setVal(`late_rule_${i}_actual_minutes`, normalizeRuleMinutesOrEmpty(item.actual_minutes), '');
+        setVal(`late_rule_${i}_equivalent_minutes`, normalizeRuleMinutesOrEmpty(item.equivalent_minutes), '');
+    }
+    updateLateEquivalencyPreview();
+}
+
+function normalizeRulePositiveMinutes(value) {
+    const parsed = parseFloat(value);
+    if (!isFinite(parsed) || parsed <= 0) {
+        return null;
+    }
+    return Math.min(1440, Number(parsed.toFixed(2)));
+}
+
+function normalizeRuleMinutesOrEmpty(value) {
+    const normalized = normalizeRulePositiveMinutes(value);
+    return normalized === null ? '' : normalized.toFixed(2);
+}
+
+function updateLateEquivalencyPreview() {
+    const preview = document.getElementById('late_equivalency_preview');
+    if (!preview) return;
+
+    const lines = [];
+    for (let i = 1; i <= 3; i++) {
+        const actualRaw = document.getElementById(`late_rule_${i}_actual_minutes`)?.value;
+        const equivRaw = document.getElementById(`late_rule_${i}_equivalent_minutes`)?.value;
+        const actual = normalizeRulePositiveMinutes(actualRaw);
+        const equivalent = normalizeRulePositiveMinutes(equivRaw);
+
+        if (actual !== null && equivalent !== null) {
+            const multiplier = equivalent / Math.max(0.01, actual);
+            lines.push(`Rule ${i}: ${actual.toFixed(2)} min = ${equivalent.toFixed(2)} min (x${multiplier.toFixed(4)})`);
+        }
+    }
+
+    preview.textContent = lines.length > 0
+        ? lines.join(' | ')
+        : 'No late equivalency rules set. Late deduction will follow actual late minutes.';
+}
+
+function bindLateEquivalencyInputs() {
+    const ids = [];
+    for (let i = 1; i <= 3; i++) {
+        ids.push(`late_rule_${i}_actual_minutes`, `late_rule_${i}_equivalent_minutes`);
+    }
+
+    ids.forEach(id => {
+        const input = document.getElementById(id);
+        if (!input || input.dataset.boundEquivalency === '1') return;
+
+        input.addEventListener('input', updateLateEquivalencyPreview);
+        input.addEventListener('blur', () => {
+            const normalized = normalizeRulePositiveMinutes(input.value);
+            input.value = normalized === null ? '' : normalized.toFixed(2);
+            updateLateEquivalencyPreview();
+        });
+
+        input.dataset.boundEquivalency = '1';
+    });
+}
+
+function normalizeRuleTime24(value, fallback = '08:00') {
+    const raw = String(value || '').trim();
+    const digits = raw.replace(/[^0-9]/g, '').slice(0, 4);
+
+    let hh = '';
+    let mm = '';
+
+    if (raw.includes(':')) {
+        const parts = raw.split(':');
+        hh = String(parts[0] || '').replace(/[^0-9]/g, '');
+        mm = String(parts[1] || '').replace(/[^0-9]/g, '');
+    } else if (digits.length >= 3) {
+        hh = digits.slice(0, 2);
+        mm = digits.slice(2);
+    }
+
+    if (hh === '' || mm === '') {
+        return fallback;
+    }
+
+    const h = parseInt(hh, 10);
+    const m = parseInt(mm, 10);
+    if (isNaN(h) || isNaN(m) || h < 0 || h > 23 || m < 0 || m > 59) {
+        return fallback;
+    }
+
+    return String(h).padStart(2, '0') + ':' + String(m).padStart(2, '0');
+}
+
+function bindRulesTimeInputs() {
+    const defaults = {
+        shift_1_time_in: '08:00',
+        shift_1_time_out: '17:00',
+        shift_2_time_in: '08:00',
+        shift_2_time_out: '17:00'
+    };
+
+    Object.keys(defaults).forEach(id => {
+        const input = document.getElementById(id);
+        if (!input || input.dataset.timeBound === '1') return;
+
+        input.addEventListener('input', () => {
+            const digits = input.value.replace(/[^0-9]/g, '').slice(0, 4);
+            if (digits.length <= 2) {
+                input.value = digits;
+                return;
+            }
+            input.value = digits.slice(0, 2) + ':' + digits.slice(2);
+        });
+
+        input.addEventListener('blur', () => {
+            input.value = normalizeRuleTime24(input.value, defaults[id]);
+        });
+
+        input.dataset.timeBound = '1';
+    });
+}
+
+function loadSalaryRules(force = false) {
+    if (salaryRulesLoaded && !force) return;
+
+    fetch('backup_api.php?action=get_salary_rules')
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            setSalaryRulesFormValues({
+                ...(data.rules || {}),
+                late_rules: Array.isArray(data.late_rules) ? data.late_rules : []
+            });
+            salaryRulesLoaded = true;
+        } else {
+            showAlert('danger', '<strong>Error:</strong> Failed to load salary rules.');
+        }
+    })
+    .catch(error => {
+        console.error('Load salary rules error:', error);
+        showAlert('danger', '<strong>Error:</strong> Could not load salary rules.');
+    });
+}
+
+function saveSalaryRules(event) {
+    event.preventDefault();
+
+    const timeDefaults = {
+        shift_1_time_in: '08:00',
+        shift_1_time_out: '17:00',
+        shift_2_time_in: '08:00',
+        shift_2_time_out: '17:00'
+    };
+    Object.keys(timeDefaults).forEach(id => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        el.value = normalizeRuleTime24(el.value, timeDefaults[id]);
+    });
+
+    for (let i = 1; i <= 3; i++) {
+        const actualEl = document.getElementById(`late_rule_${i}_actual_minutes`);
+        const equivEl = document.getElementById(`late_rule_${i}_equivalent_minutes`);
+        if (actualEl) {
+            const normalized = normalizeRulePositiveMinutes(actualEl.value);
+            actualEl.value = normalized === null ? '' : normalized.toFixed(2);
+        }
+        if (equivEl) {
+            const normalized = normalizeRulePositiveMinutes(equivEl.value);
+            equivEl.value = normalized === null ? '' : normalized.toFixed(2);
+        }
+    }
+    updateLateEquivalencyPreview();
+
+    const btn = document.getElementById('saveSalaryRulesBtn');
+    const originalHtml = btn.innerHTML;
+    btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
+    btn.disabled = true;
+
+    const formData = new FormData(document.getElementById('salaryRulesForm'));
+    formData.append('action', 'save_salary_rules');
+
+    fetch('backup_api.php', {
+        method: 'POST',
+        body: formData
+    })
+    .then(response => response.json())
+    .then(data => {
+        if (data.success) {
+            setSalaryRulesFormValues({
+                ...(data.rules || {}),
+                late_rules: Array.isArray(data.late_rules) ? data.late_rules : []
+            });
+            showAlert('success', '<strong>Rules saved!</strong> Shift settings are now applied in Generate Payroll and DTR calculator defaults.');
+            salaryRulesLoaded = true;
+        } else {
+            showAlert('danger', '<strong>Error:</strong> ' + (data.message || 'Failed to save salary rules.'));
+        }
+    })
+    .catch(error => {
+        console.error('Save salary rules error:', error);
+        showAlert('danger', '<strong>Error:</strong> Could not save salary rules. Please try again.');
+    })
+    .finally(() => {
+        btn.innerHTML = originalHtml;
+        btn.disabled = false;
+    });
+
     return false;
 }
 
@@ -2465,6 +2946,10 @@ function escapeHtml(text) {
 document.addEventListener('DOMContentLoaded', function() {
     updateFrequencyFields();
     loadCronUrl();
+    bindRulesTimeInputs();
+    bindLateEquivalencyInputs();
+    updateLateEquivalencyPreview();
+    loadSalaryRules();
     
     // Initial load of backup list if on that tab
     const activeTab = document.querySelector('.tab-btn.active');
