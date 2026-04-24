@@ -10,6 +10,19 @@ header('Content-Type: application/json');
 
 require_once '../config/database.php';
 
+function ensureDtrRecordsFlagsColumns(PDO $pdo): void {
+    try {
+        $pdo->exec("ALTER TABLE dtr_records ADD COLUMN is_ob TINYINT(1) NOT NULL DEFAULT 0 AFTER is_training");
+    } catch (Throwable $e) {
+        // Ignore if column already exists.
+    }
+    try {
+        $pdo->exec("ALTER TABLE dtr_records ADD COLUMN is_holiday TINYINT(1) NOT NULL DEFAULT 0 AFTER is_ob");
+    } catch (Throwable $e) {
+        // Ignore if column already exists.
+    }
+}
+
 // Allow admin and staff roles
 if (!isAuthenticated() || (!isAdmin() && !isStaff())) {
     echo json_encode(['success' => false, 'message' => 'Unauthorized']);
@@ -32,6 +45,7 @@ if ($periodId <= 0 && (empty($month) || !preg_match('/^\d{4}-\d{2}$/', $month)))
 
 try {
     $pdo = getDBConnection();
+    ensureDtrRecordsFlagsColumns($pdo);
     
     // Get employee info (include classification)
     $stmt = $pdo->prepare("SELECT id, employee_code, full_name, position, department, basic_monthly_salary, classification FROM employees WHERE id = ?");
@@ -60,6 +74,8 @@ try {
                 d.is_halfday,
                 d.is_absent,
                 d.is_training,
+                d.is_ob,
+                d.is_holiday,
                 d.total_work_hours,
                 d.late_minutes,
                 d.late_hours,
@@ -93,6 +109,8 @@ try {
                 d.is_halfday,
                 d.is_absent,
                 d.is_training,
+                d.is_ob,
+                d.is_holiday,
                 d.total_work_hours,
                 d.late_minutes,
                 d.late_hours,

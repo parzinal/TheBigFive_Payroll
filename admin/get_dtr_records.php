@@ -18,6 +18,19 @@ if (!isAuthenticated() || !isAdmin()) {
 
 require_once '../config/database.php';
 
+function ensureDtrRecordsFlagsColumns(PDO $pdo): void {
+    try {
+        $pdo->exec("ALTER TABLE dtr_records ADD COLUMN is_ob TINYINT(1) NOT NULL DEFAULT 0 AFTER is_training");
+    } catch (Throwable $e) {
+        // Ignore if column already exists.
+    }
+    try {
+        $pdo->exec("ALTER TABLE dtr_records ADD COLUMN is_holiday TINYINT(1) NOT NULL DEFAULT 0 AFTER is_ob");
+    } catch (Throwable $e) {
+        // Ignore if column already exists.
+    }
+}
+
 $employeeId = intval($_GET['employee_id'] ?? 0);
 $payrollPeriodId = intval($_GET['payroll_period_id'] ?? 0);
 $checkOnly = isset($_GET['check_only']) && $_GET['check_only'] == '1';
@@ -29,6 +42,7 @@ $month = intval($_GET['month'] ?? 0);
 if ($checkPeriods && $employeeId && $year && $month) {
     try {
         $pdo = getDBConnection();
+        ensureDtrRecordsFlagsColumns($pdo);
         
         // Create date ranges for both company cutoff periods
         $monthStr = str_pad($month, 2, '0', STR_PAD_LEFT);
@@ -84,6 +98,7 @@ if (!$employeeId || !$payrollPeriodId) {
 
 try {
     $pdo = getDBConnection();
+    ensureDtrRecordsFlagsColumns($pdo);
     
     if ($checkOnly) {
         // Just check if records exist
@@ -121,6 +136,9 @@ try {
                 undertime_hours,
                 daily_ot_hours,
                 is_absent,
+                is_training,
+                is_ob,
+                is_holiday,
                 is_variable,
                 remarks,
                 calculation_mode,
@@ -157,6 +175,9 @@ try {
             $record['undertime_hours'] = floatval($record['undertime_hours'] ?? 0);
             $record['daily_ot_hours'] = floatval($record['daily_ot_hours'] ?? 0);
             $record['is_absent'] = boolval($record['is_absent'] ?? false);
+            $record['is_training'] = boolval($record['is_training'] ?? false);
+            $record['is_ob'] = boolval($record['is_ob'] ?? false);
+            $record['is_holiday'] = boolval($record['is_holiday'] ?? false);
             $record['is_halfday'] = boolval($record['is_halfday'] ?? false);
         }
         

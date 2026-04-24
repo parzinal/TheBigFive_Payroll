@@ -335,7 +335,7 @@ try {
                         <i class="fas fa-balance-scale"></i>
                         <h3>Payroll Shift Rules</h3>
                     </div>
-                    <p class="settings-card-desc">Configure Shift 1 and Shift 2 defaults for Per Day rate, OT rate, Time In, and Time Out, plus a custom Late Equivalency rule used in Generate Payroll and the DTR calculator.</p>
+                    <p class="settings-card-desc">Configure Shift 1 and Shift 2 defaults for OT rate and schedule times, plus global per-day rates by classification and a configurable grace period used in Generate Payroll and the DTR calculator.</p>
                 </div>
                 <div class="settings-card-body">
                     <form id="salaryRulesForm" onsubmit="return saveSalaryRules(event)">
@@ -347,10 +347,6 @@ try {
                                 </div>
                                 <input type="hidden" name="shift_1_name" value="Shift 1">
                                 <div class="rule-fields">
-                                    <div class="rule-field">
-                                        <label for="shift_1_per_day_rate">Per Day Rate</label>
-                                        <input type="number" min="0" step="0.01" class="form-input-modern" id="shift_1_per_day_rate" name="shift_1_per_day_rate" value="0.00" required>
-                                    </div>
                                     <div class="rule-field">
                                         <label for="shift_1_ot_rate">OT Rate</label>
                                         <input type="number" min="0" step="0.01" class="form-input-modern" id="shift_1_ot_rate" name="shift_1_ot_rate" value="0.00" required>
@@ -376,10 +372,6 @@ try {
                                 <input type="hidden" name="shift_2_name" value="Shift 2">
                                 <div class="rule-fields">
                                     <div class="rule-field">
-                                        <label for="shift_2_per_day_rate">Per Day Rate</label>
-                                        <input type="number" min="0" step="0.01" class="form-input-modern" id="shift_2_per_day_rate" name="shift_2_per_day_rate" value="0.00" required>
-                                    </div>
-                                    <div class="rule-field">
                                         <label for="shift_2_ot_rate">OT Rate</label>
                                         <input type="number" min="0" step="0.01" class="form-input-modern" id="shift_2_ot_rate" name="shift_2_ot_rate" value="0.00" required>
                                     </div>
@@ -392,6 +384,27 @@ try {
                                             <label for="shift_2_time_out">Time Out</label>
                                             <input type="text" class="form-input-modern rules-time-input" id="shift_2_time_out" name="shift_2_time_out" value="17:00" placeholder="17:00" maxlength="5" inputmode="numeric" required>
                                         </div>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div class="rule-card">
+                                <div class="rule-card-header">
+                                    <h4><i class="fas fa-coins"></i> Rate Profile and Grace</h4>
+                                    <small>Global rates used by DTR calculation</small>
+                                </div>
+                                <div class="rule-fields">
+                                    <div class="rule-field">
+                                        <label for="fixed_per_day_rate">Per Day Rate for Fixed Rate</label>
+                                        <input type="number" min="0" step="0.01" class="form-input-modern" id="fixed_per_day_rate" name="fixed_per_day_rate" value="0.00" required>
+                                    </div>
+                                    <div class="rule-field">
+                                        <label for="trainer_per_day_rate">Per Day Rate for Trainer</label>
+                                        <input type="number" min="0" step="0.01" class="form-input-modern" id="trainer_per_day_rate" name="trainer_per_day_rate" value="500.00" required>
+                                    </div>
+                                    <div class="rule-field">
+                                        <label for="grace_period_minutes">Grace Period (minutes)</label>
+                                        <input type="number" min="0" max="120" step="1" class="form-input-modern" id="grace_period_minutes" name="grace_period_minutes" value="5" required>
                                     </div>
                                 </div>
                             </div>
@@ -2149,6 +2162,7 @@ function saveSettings(event) {
 function setSalaryRulesFormValues(rules) {
     const shift1 = rules?.shift_1 || {};
     const shift2 = rules?.shift_2 || {};
+    const rateProfile = rules?.rate_profile || {};
 
     const setVal = (id, value, fallback = '') => {
         const el = document.getElementById(id);
@@ -2156,15 +2170,17 @@ function setSalaryRulesFormValues(rules) {
         el.value = (value ?? fallback);
     };
 
-    setVal('shift_1_per_day_rate', Number(shift1.per_day_rate ?? 0).toFixed(2), '0.00');
     setVal('shift_1_ot_rate', Number(shift1.ot_rate ?? 0).toFixed(2), '0.00');
     setVal('shift_1_time_in', normalizeRuleTime24(shift1.time_in, '08:00'), '08:00');
     setVal('shift_1_time_out', normalizeRuleTime24(shift1.time_out, '17:00'), '17:00');
 
-    setVal('shift_2_per_day_rate', Number(shift2.per_day_rate ?? 0).toFixed(2), '0.00');
     setVal('shift_2_ot_rate', Number(shift2.ot_rate ?? 0).toFixed(2), '0.00');
     setVal('shift_2_time_in', normalizeRuleTime24(shift2.time_in, '08:00'), '08:00');
     setVal('shift_2_time_out', normalizeRuleTime24(shift2.time_out, '17:00'), '17:00');
+
+    setVal('fixed_per_day_rate', Number(rateProfile.fixed_per_day_rate ?? 0).toFixed(2), '0.00');
+    setVal('trainer_per_day_rate', Number(rateProfile.trainer_per_day_rate ?? 500).toFixed(2), '500.00');
+    setVal('grace_period_minutes', normalizeRuleGraceMinutesInput(rateProfile.grace_period_minutes, 5), '5');
 
     const lateRules = Array.isArray(rules?.late_rules) ? rules.late_rules : [];
     for (let i = 1; i <= 3; i++) {
@@ -2186,6 +2202,17 @@ function normalizeRulePositiveMinutes(value) {
 function normalizeRuleMinutesOrEmpty(value) {
     const normalized = normalizeRulePositiveMinutes(value);
     return normalized === null ? '' : normalized.toFixed(2);
+}
+
+function normalizeRuleGraceMinutesInput(value, fallback = 5) {
+    const parsed = parseInt(value, 10);
+    if (!isFinite(parsed)) {
+        return String(fallback);
+    }
+    if (parsed < 0) {
+        return '0';
+    }
+    return String(Math.min(120, parsed));
 }
 
 function updateLateEquivalencyPreview() {
@@ -2298,6 +2325,7 @@ function loadSalaryRules(force = false) {
         if (data.success) {
             setSalaryRulesFormValues({
                 ...(data.rules || {}),
+                rate_profile: data.rate_profile || {},
                 late_rules: Array.isArray(data.late_rules) ? data.late_rules : []
             });
             salaryRulesLoaded = true;
@@ -2340,6 +2368,21 @@ function saveSalaryRules(event) {
     }
     updateLateEquivalencyPreview();
 
+    const fixedRateInput = document.getElementById('fixed_per_day_rate');
+    const trainerRateInput = document.getElementById('trainer_per_day_rate');
+    const graceInput = document.getElementById('grace_period_minutes');
+    if (fixedRateInput) {
+        const fixedVal = Math.max(0, parseFloat(fixedRateInput.value) || 0);
+        fixedRateInput.value = fixedVal.toFixed(2);
+    }
+    if (trainerRateInput) {
+        const trainerVal = Math.max(0, parseFloat(trainerRateInput.value) || 0);
+        trainerRateInput.value = trainerVal.toFixed(2);
+    }
+    if (graceInput) {
+        graceInput.value = normalizeRuleGraceMinutesInput(graceInput.value, 5);
+    }
+
     const btn = document.getElementById('saveSalaryRulesBtn');
     const originalHtml = btn.innerHTML;
     btn.innerHTML = '<i class="fas fa-spinner fa-spin"></i> Saving...';
@@ -2357,6 +2400,7 @@ function saveSalaryRules(event) {
         if (data.success) {
             setSalaryRulesFormValues({
                 ...(data.rules || {}),
+                rate_profile: data.rate_profile || {},
                 late_rules: Array.isArray(data.late_rules) ? data.late_rules : []
             });
             showAlert('success', '<strong>Rules saved!</strong> Shift settings are now applied in Generate Payroll and DTR calculator defaults.');

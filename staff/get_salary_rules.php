@@ -30,7 +30,7 @@ function ensureSalaryRulesTable(PDO $pdo): void {
 }
 
 function ensurePayrollRuleSettingsTable(PDO $pdo): void {
-    $pdo->exec("\n        CREATE TABLE IF NOT EXISTS payroll_rule_settings (\n            id TINYINT UNSIGNED PRIMARY KEY,\n            late_rule_1_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_1_equivalent_minutes DECIMAL(10,2) NULL,\n            late_rule_2_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_2_equivalent_minutes DECIMAL(10,2) NULL,\n            late_rule_3_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_3_equivalent_minutes DECIMAL(10,2) NULL,\n            updated_by INT NULL,\n            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP\n        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci\n    ");
+    $pdo->exec("\n        CREATE TABLE IF NOT EXISTS payroll_rule_settings (\n            id TINYINT UNSIGNED PRIMARY KEY,\n            late_rule_1_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_1_equivalent_minutes DECIMAL(10,2) NULL,\n            late_rule_2_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_2_equivalent_minutes DECIMAL(10,2) NULL,\n            late_rule_3_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_3_equivalent_minutes DECIMAL(10,2) NULL,\n            fixed_per_day_rate DECIMAL(12,2) NOT NULL DEFAULT 0,\n            trainer_per_day_rate DECIMAL(12,2) NOT NULL DEFAULT 500,\n            grace_period_minutes INT NOT NULL DEFAULT 5,\n            updated_by INT NULL,\n            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP\n        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci\n    ");
 
     try {
         $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN late_rule_1_actual_minutes DECIMAL(10,2) NULL AFTER id");
@@ -56,6 +56,18 @@ function ensurePayrollRuleSettingsTable(PDO $pdo): void {
         $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN late_rule_3_equivalent_minutes DECIMAL(10,2) NULL AFTER late_rule_3_actual_minutes");
     } catch (Throwable $e) {
     }
+    try {
+        $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN fixed_per_day_rate DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER late_rule_3_equivalent_minutes");
+    } catch (Throwable $e) {
+    }
+    try {
+        $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN trainer_per_day_rate DECIMAL(12,2) NOT NULL DEFAULT 500 AFTER fixed_per_day_rate");
+    } catch (Throwable $e) {
+    }
+    try {
+        $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN grace_period_minutes INT NOT NULL DEFAULT 5 AFTER trainer_per_day_rate");
+    } catch (Throwable $e) {
+    }
 
     $pdo->exec("INSERT IGNORE INTO payroll_rule_settings (id) VALUES (1)");
 }
@@ -73,6 +85,25 @@ function normalizeRuleMinutesOrNull($value): ?float {
         return null;
     }
     return round(min(1440.0, $num), 2);
+}
+
+function normalizeRuleRate($value): float {
+    $num = floatval($value);
+    if (!is_finite($num) || $num < 0) {
+        return 0.0;
+    }
+    return round($num, 2);
+}
+
+function normalizeRuleGraceMinutes($value, int $fallback = 5): int {
+    $num = intval($value);
+    if (!is_finite($num)) {
+        return $fallback;
+    }
+    if ($num < 0) {
+        return 0;
+    }
+    return min(120, $num);
 }
 
 try {
@@ -153,10 +184,17 @@ try {
         }
     }
 
+    $rateProfile = [
+        'fixed_per_day_rate' => normalizeRuleRate($lateRuleRow['fixed_per_day_rate'] ?? 0),
+        'trainer_per_day_rate' => normalizeRuleRate($lateRuleRow['trainer_per_day_rate'] ?? 500),
+        'grace_period_minutes' => normalizeRuleGraceMinutes($lateRuleRow['grace_period_minutes'] ?? 5, 5),
+    ];
+
     echo json_encode([
         'success' => true,
         'rules' => $rules,
         'late_rules' => $lateRules,
+        'rate_profile' => $rateProfile,
         'late_rule' => $legacyLateRule,
     ]);
 } catch (Throwable $e) {

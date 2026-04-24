@@ -29,8 +29,22 @@ if ($_SERVER['REQUEST_METHOD'] !== 'POST') {
 // CSRF check
 requireCSRFToken();
 
+function ensureDtrRecordsFlagsColumns(PDO $pdo): void {
+    try {
+        $pdo->exec("ALTER TABLE dtr_records ADD COLUMN is_ob TINYINT(1) NOT NULL DEFAULT 0 AFTER is_training");
+    } catch (Throwable $e) {
+        // Ignore if column already exists.
+    }
+    try {
+        $pdo->exec("ALTER TABLE dtr_records ADD COLUMN is_holiday TINYINT(1) NOT NULL DEFAULT 0 AFTER is_ob");
+    } catch (Throwable $e) {
+        // Ignore if column already exists.
+    }
+}
+
 try {
     $pdo = getDBConnection();
+    ensureDtrRecordsFlagsColumns($pdo);
     
     $createdBy = $_SESSION['user_id'];
     
@@ -257,12 +271,12 @@ try {
             employee_id, payroll_period_id, dtr_date,
             am_time_in, am_time_out, pm_time_in, pm_time_out,
             ot_time_out, halfday_in, halfday_out, is_halfday,
-            is_absent, is_training, remarks,
+            is_absent, is_training, is_ob, is_holiday, remarks,
             total_work_hours, late_minutes, late_hours,
             undertime_minutes, undertime_hours, daily_ot_hours,
             govt_deduct, net_salary,
             created_at, created_by, updated_by
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, NOW(), ?, ?)
         ON DUPLICATE KEY UPDATE
             payroll_period_id = VALUES(payroll_period_id),
             am_time_in = VALUES(am_time_in),
@@ -275,6 +289,8 @@ try {
             is_halfday = VALUES(is_halfday),
             is_absent = VALUES(is_absent),
             is_training = VALUES(is_training),
+            is_ob = VALUES(is_ob),
+            is_holiday = VALUES(is_holiday),
             remarks = VALUES(remarks),
             total_work_hours = VALUES(total_work_hours),
             late_minutes = VALUES(late_minutes),
@@ -301,6 +317,8 @@ try {
         $halfOut = parseTimeFor24h($record['half_out'] ?? '');
         $isAbsent = intval($record['is_absent'] ?? 0);
         $isTraining = intval($record['is_training'] ?? 0);
+        $isOB = intval($record['is_ob'] ?? 0);
+        $isHoliday = intval($record['is_holiday'] ?? 0);
         $remarks = $record['remarks'] ?? '';
         
         // Calculated fields per row
@@ -321,7 +339,7 @@ try {
         $upsertStmt->execute([
             $employeeId, $payrollPeriodId, $dtrDate,
             $amIn, $amOut, $pmIn, $pmOut, $otOut, $halfIn, $halfOut, $isHalfday,
-            $isAbsent, $isTraining, $remarks,
+            $isAbsent, $isTraining, $isOB, $isHoliday, $remarks,
             $rowTotalWorkHours, $rowLateMinutes, $rowLateHours,
             $rowUndertimeMinutes, $rowUndertimeHours, $rowOtHours,
             $rowGovtDeduct, $rowNetSalary,

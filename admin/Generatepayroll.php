@@ -364,6 +364,8 @@ $payroll_periods = $stmt->fetchAll();
                                         <th rowspan="3" class="th-group th-am">AM IN</th>
                                         <th rowspan="3" class="th-group th-pm">PM OUT</th>
                                         <th rowspan="3" class="th-single th-absent-col">ABSENT</th>
+                                        <th rowspan="3" class="th-single th-ob-col">OB</th>
+                                        <th rowspan="3" class="th-single th-holiday-col">HOLIDAY</th>
                                         <th rowspan="3" class="th-single th-training-col">TRAINING</th>
                                         <th rowspan="3" class="th-single th-ot-col">OT<br>OUT</th>
                                         <th rowspan="3" class="th-calc">TOT.WORK<br>(in hours)</th>
@@ -375,7 +377,6 @@ $payroll_periods = $stmt->fetchAll();
                                         <th rowspan="3" class="th-deduct">UNDERTIME<br>DEDUCT</th>
                                         <th rowspan="3" class="th-deduct">HALFDAY<br>DEDUCT</th>
                                         <th rowspan="3" class="th-pay">OT PAY</th>
-                                        <th rowspan="3" class="th-calc">MINUS OT<br>TOTAL<br>DEDUCTIONS</th>
                                         <th colspan="3" class="th-group th-auto-calc">AUTOMATIC CALCULATIONS</th>
                                         <th rowspan="3" class="th-manual">Government<br>Benefits</th>
                                         <th rowspan="3" class="th-auto-salary">Net<br>Salary</th>
@@ -393,7 +394,7 @@ $payroll_periods = $stmt->fetchAll();
                                 </tbody>
                                 <tfoot>
                                     <tr class="totals-row">
-                                        <td colspan="6" class="totals-label">TOTALS:</td>
+                                        <td colspan="8" class="totals-label">TOTALS:</td>
                                         <td></td>
                                         <td id="total_work_mins">0</td>
                                         <td id="total_late_hours">0.00</td>
@@ -404,7 +405,6 @@ $payroll_periods = $stmt->fetchAll();
                                         <td id="total_undertime_deduct">0.00</td>
                                         <td id="total_halfday_deduct">0.00</td>
                                         <td id="total_ot_payment">0.00</td>
-                                        <td id="total_net_deductions">0.00</td>
                                         <td id="total_late_min">0.00</td>
                                         <td id="total_undertime_calc">0.00</td>
                                         <td id="total_ot_calc">0.00</td>
@@ -1828,6 +1828,20 @@ $payroll_periods = $stmt->fetchAll();
     min-width: 60px;
 }
 
+/* TB5 Color Scheme - OB Column (Sky) */
+.dtr-table .th-ob-col {
+    background: #BFE7FF;
+    color: #1a365d;
+    min-width: 60px;
+}
+
+/* TB5 Color Scheme - Holiday Column (Gold) */
+.dtr-table .th-holiday-col {
+    background: #F6E05E;
+    color: #744210;
+    min-width: 70px;
+}
+
 /* TB5 Color Scheme - OT Column (Blue) */
 .dtr-table .th-ot-col {
     background: #99CCFF;
@@ -2382,22 +2396,6 @@ body.manual-payroll-mode #btn_save_all_dtr {
 
 .pay-highlight {
     background-color: #ccffcc !important; /* Green for OT pay */
-}
-
-/* Hide MINUS OT TOTAL DEDUCTIONS column (16th) - column still computed, just not displayed */
-/* Use tbody-scoped selector so tfoot colspan does not shift nth-child counting */
-.dtr-table th:nth-child(16),
-.dtr-table tbody td:nth-child(16) {
-    display: none !important;
-}
-/* Hide total_net_deductions cell in tfoot by ID (nth-child cannot be used there due to colspan) */
-#total_net_deductions {
-    display: none !important;
-}
-
-.net-deduct-highlight {
-    background-color: #fff3cd !important; /* Light yellow for net deductions */
-    font-weight: 600;
 }
 
 .centered {
@@ -4422,6 +4420,11 @@ const DEFAULT_SALARY_RULES = {
         ot_rate: 0,
         time_in: '08:00',
         time_out: '17:00'
+    },
+    rate_profile: {
+        fixed_per_day_rate: 0,
+        trainer_per_day_rate: 500,
+        grace_period_minutes: 5
     }
 };
 
@@ -4459,6 +4462,41 @@ function normalizeRuleRate(value) {
     const rate = parseFloat(value);
     if (!isFinite(rate) || rate < 0) return 0;
     return parseFloat(rate.toFixed(2));
+}
+
+function normalizeRuleGraceMinutes(value, fallback = 5) {
+    const parsed = parseInt(value, 10);
+    if (!isFinite(parsed)) {
+        return fallback;
+    }
+    if (parsed < 0) {
+        return 0;
+    }
+    return Math.min(120, parsed);
+}
+
+function getNormalizedClassification() {
+    return String(currentEmployeeClassification || '').toLowerCase().replace(/\s+/g, '');
+}
+
+function getRateProfileFromRules() {
+    return salaryRulesConfig?.rate_profile || DEFAULT_SALARY_RULES.rate_profile;
+}
+
+function getClassificationPerDayRate(fallback = 0) {
+    const profile = getRateProfileFromRules();
+    const normalizedClass = getNormalizedClassification();
+    const trainerRate = normalizeRuleRate(profile?.trainer_per_day_rate ?? DEFAULT_SALARY_RULES.rate_profile.trainer_per_day_rate);
+    const fixedRate = normalizeRuleRate(profile?.fixed_per_day_rate ?? DEFAULT_SALARY_RULES.rate_profile.fixed_per_day_rate);
+    if (normalizedClass === 'trainer') {
+        return trainerRate > 0 ? trainerRate : normalizeRuleRate(fallback);
+    }
+    return fixedRate > 0 ? fixedRate : normalizeRuleRate(fallback);
+}
+
+function getConfiguredGraceMinutes() {
+    const profile = getRateProfileFromRules();
+    return normalizeRuleGraceMinutes(profile?.grace_period_minutes, DEFAULT_SALARY_RULES.rate_profile.grace_period_minutes);
 }
 
 function cloneDefaultLateEquivalencyRules() {
@@ -4516,7 +4554,7 @@ function getSelectedShiftRuleCode() {
     return select.value === 'shift_2' ? 'shift_2' : 'shift_1';
 }
 
-function mergeSalaryRules(rawRules) {
+function mergeSalaryRules(rawRules, rawRateProfile = null) {
     const merged = cloneDefaultSalaryRules();
     ['shift_1', 'shift_2'].forEach(code => {
         const incoming = rawRules && rawRules[code] ? rawRules[code] : {};
@@ -4529,6 +4567,14 @@ function mergeSalaryRules(rawRules) {
             time_out: normalizeRuleTimeForInput(incoming.time_out, merged[code].time_out)
         };
     });
+
+    const incomingRateProfile = rawRateProfile && typeof rawRateProfile === 'object' ? rawRateProfile : {};
+    merged.rate_profile = {
+        fixed_per_day_rate: normalizeRuleRate(incomingRateProfile.fixed_per_day_rate ?? merged.rate_profile.fixed_per_day_rate),
+        trainer_per_day_rate: normalizeRuleRate(incomingRateProfile.trainer_per_day_rate ?? merged.rate_profile.trainer_per_day_rate),
+        grace_period_minutes: normalizeRuleGraceMinutes(incomingRateProfile.grace_period_minutes, merged.rate_profile.grace_period_minutes)
+    };
+
     return merged;
 }
 
@@ -4550,7 +4596,7 @@ function loadSalaryRulesForPayroll(force = false) {
         .then(response => response.json())
         .then(data => {
             if (data && data.success) {
-                salaryRulesConfig = mergeSalaryRules(data.rules || {});
+                salaryRulesConfig = mergeSalaryRules(data.rules || {}, data.rate_profile || {});
                 salaryLateRulesConfig = normalizeLateEquivalencyRules(data.late_rules || [], data.late_rule || null);
                 salaryRulesLoaded = true;
                 updateShiftRuleSelectLabels();
@@ -4583,7 +4629,7 @@ function applySalaryRuleToHeader(shiftCode, force = false) {
     const otRateInput = document.getElementById('ot_rate');
     const lateThresholdInput = document.getElementById('late_threshold');
     const endThresholdInput = document.getElementById('end_threshold');
-    const rulePerDayRate = normalizeRuleRate(rule.per_day_rate);
+    const rulePerDayRate = getClassificationPerDayRate(normalizeRuleRate(rule.per_day_rate));
     const ruleOtRate = normalizeRuleRate(rule.ot_rate);
 
     isApplyingShiftRule = true;
@@ -5302,6 +5348,8 @@ function saveSingleTabToDatabase(tabId) {
                 pm_in:          row.querySelector(`input[name="pm_in_${rowNum}"]`)?.value        || '',
                 pm_out:         row.querySelector(`input[name="pm_out_${rowNum}"]`)?.value       || '',
                 is_absent:      row.querySelector(`input[name="absent_${rowNum}"]`)?.checked ? 1 : 0,
+                is_ob:          row.querySelector(`input[name="ob_${rowNum}"]`)?.checked ? 1 : 0,
+                is_holiday:     row.querySelector(`input[name="holiday_${rowNum}"]`)?.checked ? 1 : 0,
                 is_training:    row.querySelector(`input[name="training_${rowNum}"]`)?.checked ? 1 : 0,
                 ot_out:         row.querySelector(`input[name="ot_out_${rowNum}"]`)?.value       || '',
                 half_in:        row.querySelector(`input[name="halfday_in_${rowNum}"]`)?.value   || '',
@@ -5345,7 +5393,7 @@ function saveSingleTabToDatabase(tabId) {
         const totalOtPay        = parseFormattedNumber(document.getElementById('total_ot_payment')?.textContent);
         const totalSalary       = parseFormattedNumber(document.getElementById('total_salary')?.textContent);
         const totalGovtDeduct   = parseFormattedNumber(document.getElementById('total_govt')?.textContent);
-        const daysWorked        = dtrRecords.filter(r => !r.is_absent).length;
+        const daysWorked        = dtrRecords.filter(r => !r.is_absent && !r.is_training).length;
 
         // Calculate absent deduction = absent days × per-day rate
         const perDayForAbsent = parseFormattedNumber(document.getElementById('daily_rate')?.value) || 0;
@@ -6016,18 +6064,19 @@ function buildDayOverrideMetaForSave() {
 
     const shift1 = salaryRulesConfig?.shift_1 || DEFAULT_SALARY_RULES.shift_1;
     const shift2 = salaryRulesConfig?.shift_2 || DEFAULT_SALARY_RULES.shift_2;
+    const classPerDay = getClassificationPerDayRate(normalizeRuleRate(shift1.per_day_rate || 0));
 
     return {
         version: 2,
         mode: 'shift_day_override',
         shift_1: {
-            perDay: String(normalizeRuleRate(shift1.per_day_rate || 0)),
+            perDay: String(normalizeRuleRate(classPerDay)),
             otRate: String(normalizeRuleRate(shift1.ot_rate || 0)),
             lateStart: String(normalizeRuleTimeForInput(shift1.time_in, '08:00')),
             endTime: String(normalizeRuleTimeForInput(shift1.time_out, '17:00'))
         },
         shift_2: {
-            perDay: String(normalizeRuleRate(shift2.per_day_rate || 0)),
+            perDay: String(normalizeRuleRate(classPerDay)),
             otRate: String(normalizeRuleRate(shift2.ot_rate || 0)),
             lateStart: String(normalizeRuleTimeForInput(shift2.time_in, '08:00')),
             endTime: String(normalizeRuleTimeForInput(shift2.time_out, '17:00'))
@@ -6268,7 +6317,7 @@ function applyDayOverrideState(rowNum, isEnabled) {
     const row = document.querySelector(`tr[data-row="${rowNum}"]`);
     if (!row) return;
 
-    const isBlocked = row.querySelector('.dtr-absent')?.checked || row.querySelector('.dtr-training')?.checked;
+    const isBlocked = row.querySelector('.dtr-absent')?.checked || row.querySelector('.dtr-training')?.checked || row.querySelector('.dtr-ob')?.checked || row.querySelector('.dtr-holiday')?.checked;
     if (isEnabled && isBlocked) {
         const toggle = row.querySelector('.dtr-day-override-toggle');
         if (toggle) toggle.checked = false;
@@ -6333,6 +6382,8 @@ function addDTRRow(rowNum = null, dateStr = null, skipUpdateCalls = false) {
         <td><input type="text" name="am_in_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="8:00" maxlength="5" oninput="formatTime24(this)"></td>
         <td><input type="text" name="pm_out_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="17:00" maxlength="5" oninput="formatTime24(this)"></td>
         <td class="centered"><input type="checkbox" name="absent_${rowNum}" data-row="${rowNum}" class="dtr-absent"></td>
+        <td class="centered"><input type="checkbox" name="ob_${rowNum}" data-row="${rowNum}" class="dtr-ob"></td>
+        <td class="centered"><input type="checkbox" name="holiday_${rowNum}" data-row="${rowNum}" class="dtr-holiday"></td>
         <td class="centered"><input type="checkbox" name="training_${rowNum}" data-row="${rowNum}" class="dtr-training"></td>
         <td><input type="text" name="ot_out_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="18:00" maxlength="5" oninput="formatTime24(this)"></td>
         <td><input type="number" name="work_hours_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="0" step="1" title="Total work minutes"></td>
@@ -6344,7 +6395,6 @@ function addDTRRow(rowNum = null, dateStr = null, skipUpdateCalls = false) {
         <td><input type="number" name="undertime_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Undertime deduction"></td>
         <td><input type="number" name="halfday_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Halfday deduction (auto-calculated when work hours < 4)"></td>
         <td><input type="number" name="ot_pay_${rowNum}" data-row="${rowNum}" class="dtr-pay pay-highlight" readonly value="0.00" step="0.01" title="OT payment"></td>
-        <td><input type="number" name="net_deduct_${rowNum}" data-row="${rowNum}" class="dtr-calc net-deduct-highlight" readonly value="0.00" step="0.01" title="Total deductions minus OT pay"></td>
         <td><input type="number" name="late_min_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Late in minutes calculation"></td>
         <td><input type="number" name="undertime_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Undertime calculation"></td>
         <td><input type="number" name="ot_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="OT calculation"></td>
@@ -6467,7 +6517,7 @@ function calculateHours(timeIn, timeOut, scheduledStartOverride = null) {
     
     // Read scheduled start time from UI input (late_threshold is treated as scheduled start)
     const thresholdInput = document.getElementById('late_threshold');
-    const gracePeriodMinutes = 5;
+    const gracePeriodMinutes = getConfiguredGraceMinutes();
     let scheduledStartMins = 8 * 60; // Default scheduled start: 8:00 AM
     const thresholdValue = scheduledStartOverride || (thresholdInput ? thresholdInput.value : '');
     if (thresholdValue) {
@@ -6518,8 +6568,8 @@ function calculateHours(timeIn, timeOut, scheduledStartOverride = null) {
     return totalHours;
 }
 
-// Calculate late minutes with 5-minute grace period
-// Example: Late start is 8:00 AM, grace period extends to 8:05 AM
+// Calculate late minutes with configurable grace period
+// Example: Late start is 8:00 AM, grace period extends to 8:00 + configured minutes
 // Arrive at 8:05 or before = not late
 // Arrive at 8:06 = 6 minutes late (calculated from 8:00, not 8:05)
 function calculateLateMinutes(amIn, scheduledStartOverride = null) {
@@ -6529,7 +6579,7 @@ function calculateLateMinutes(amIn, scheduledStartOverride = null) {
     
     // Read scheduled start from UI input (late_threshold is treated as scheduled start)
     const thresholdInput = document.getElementById('late_threshold');
-    const gracePeriodMinutes = 5;
+    const gracePeriodMinutes = getConfiguredGraceMinutes();
     let scheduledStartMins = 8 * 60; // Default: 8:00 AM
     const thresholdValue = scheduledStartOverride || (thresholdInput ? thresholdInput.value : '');
     if (thresholdValue) {
@@ -6676,6 +6726,9 @@ function calculateRowDTR(rowNum) {
     const pmOut = document.querySelector(`input[name="pm_out_${rowNum}"]`)?.value || '';
     const otOut = document.querySelector(`input[name="ot_out_${rowNum}"]`)?.value || '';
     const isAbsent = document.querySelector(`input[name="absent_${rowNum}"]`)?.checked || false;
+    const isOB = document.querySelector(`input[name="ob_${rowNum}"]`)?.checked || false;
+    const isHoliday = document.querySelector(`input[name="holiday_${rowNum}"]`)?.checked || false;
+    const isTraining = document.querySelector(`input[name="training_${rowNum}"]`)?.checked || false;
     const isDayOverride = document.querySelector(`input[name="day_override_enabled_${rowNum}"]`)?.checked || false;
 
     const headerDailyRate = parseFormattedNumber(document.getElementById('daily_rate')?.value) || dailyRate;
@@ -6686,44 +6739,57 @@ function calculateRowDTR(rowNum) {
     const shift2Rule = salaryRulesConfig?.shift_2 || DEFAULT_SALARY_RULES.shift_2;
     const activeRule = isDayOverride ? shift2Rule : shift1Rule;
 
-    let effectiveDailyRate = headerDailyRate;
-    let effectiveOtRate = normalizeRuleRate(activeRule.ot_rate || 0);
+    const classDailyRate = getClassificationPerDayRate(headerDailyRate);
+    let effectiveDailyRate = classDailyRate > 0 ? classDailyRate : headerDailyRate;
+    const ruleOtRate = normalizeRuleRate(activeRule.ot_rate || 0);
+    let effectiveOtRate = manualOtRate > 0 ? manualOtRate : ruleOtRate;
     let effectiveLateThreshold = normalizeRuleTimeForInput(activeRule.time_in, headerLateThreshold);
     let effectiveEndThreshold = normalizeRuleTimeForInput(activeRule.time_out, headerEndThreshold);
-
-    const configuredPerDay = normalizeRuleRate(activeRule.per_day_rate || 0);
-    if (configuredPerDay > 0) {
-        effectiveDailyRate = configuredPerDay;
-    }
 
     dailyRate = effectiveDailyRate;
     hourlyRate = dailyRate / 8;
     perMin = hourlyRate / 60;
-    otRate = effectiveOtRate;
+    // Fallback OT rate to hourly when no explicit OT rate is configured.
+    otRate = effectiveOtRate > 0 ? effectiveOtRate : hourlyRate;
     
     let workHours = 0;
+    let holidayWorkedHours = 0;
     let lateMinutes = 0;
     let undertimeHours = 0;
     let otHours = 0;
     let absentDay = isAbsent ? 1 : 0;
-    
-    if (!isAbsent) {
-        // Calculate late minutes first (with grace period)
-        lateMinutes = calculateLateMinutes(amIn, effectiveLateThreshold);
-        
-        // Calculate work hours from AM IN to PM OUT
-        // If within grace period, counts from scheduled start time
-        workHours = calculateHours(amIn, pmOut, effectiveLateThreshold);
-        
-        // Calculate OT hours (TB5: otOut - closing_time)
+
+    if (isHoliday) {
+        // Holiday base credit is always 1 day (8 hours). Any entered AM IN/PM OUT time
+        // is added on top to support holiday double-pay workflows.
+        holidayWorkedHours = (amIn && pmOut) ? calculateHours(amIn, pmOut, effectiveLateThreshold) : 0;
+        workHours = 8 + holidayWorkedHours;
+        lateMinutes = amIn ? calculateLateMinutes(amIn, effectiveLateThreshold) : 0;
+        absentDay = 0;
         const otMinutes = calculateOTMinutes(otOut, effectiveEndThreshold);
         otHours = otMinutes / 60;
+    } else if (!isAbsent && !isTraining) {
+        if (isOB) {
+            const otMinutes = calculateOTMinutes(otOut, effectiveEndThreshold);
+            otHours = otMinutes / 60;
+        } else {
+            // Calculate late minutes first (with grace period)
+            lateMinutes = calculateLateMinutes(amIn, effectiveLateThreshold);
+            
+            // Calculate work hours from AM IN to PM OUT
+            // If within grace period, counts from scheduled start time
+            workHours = calculateHours(amIn, pmOut, effectiveLateThreshold);
+            
+            // Calculate OT hours (TB5: otOut - closing_time)
+            const otMinutes = calculateOTMinutes(otOut, effectiveEndThreshold);
+            otHours = otMinutes / 60;
+        }
     }
     
     // Check if halfday first (leaving around 12pm OR work hours < 4)
     let isHalfday = false;
     let halfdayDeduct = 0;
-    if (!isAbsent && pmOut) {
+    if (!isAbsent && !isTraining && !isOB && !isHoliday && pmOut) {
         const pmOutMins = parseTimeToMinutes(pmOut);
         const noonMins = 12 * 60; // 12:00 PM
         
@@ -6737,15 +6803,15 @@ function calculateRowDTR(rowNum) {
     // Calculate undertime ONLY if NOT halfday
     // If halfday, no undertime is calculated (halfday deduction covers it)
     undertimeHours = 0;
-    if (!isHalfday) {
+    if (!isHalfday && !isTraining && !isOB) {
         const utMinutes = calculateUndertimeMinutes(pmOut, effectiveEndThreshold);
         undertimeHours = utMinutes / 60;
     }
     
     // Calculate deductions and payments (TB5 format)
     const equivalentLateMinutes = getEquivalentLateMinutes(lateMinutes);
-    const lateDeduct = equivalentLateMinutes * perMin;  // LATE deduction follows configured late equivalency rule
-    const undertimeDeduct = undertimeHours * hourlyRate;
+    const lateDeduct = (isOB || isTraining) ? 0 : (equivalentLateMinutes * perMin);  // LATE deduction follows configured late equivalency rule
+    const undertimeDeduct = (isOB || isTraining) ? 0 : (undertimeHours * hourlyRate);
     const otPay = otHours * otRate;
     
     // Update row fields
@@ -6769,12 +6835,8 @@ function calculateRowDTR(rowNum) {
     if (halfdayDeductInput) halfdayDeductInput.value = halfdayDeduct.toFixed(2);
     
     document.querySelector(`input[name="ot_pay_${rowNum}"]`).value = otPay.toFixed(2);
-    
-    // Calculate net deductions (Total Deductions - OT Pay)
+
     const totalDeductions = lateDeduct + undertimeDeduct + halfdayDeduct;
-    const netDeduct = totalDeductions - otPay;
-    const netDeductInput = document.querySelector(`input[name="net_deduct_${rowNum}"]`);
-    if (netDeductInput) netDeductInput.value = netDeduct.toFixed(2);
     
     // New automatic calculations columns
     const lateMinCalcInput = document.querySelector(`input[name="late_min_calc_${rowNum}"]`);
@@ -6800,7 +6862,7 @@ function calculateRowDTR(rowNum) {
     
     // Calculate automatic salary for all days including Sunday
     // Salary = Daily rate - deductions (OT is NOT included per-row, it goes to total gross pay)
-    const hasTimeData = amIn || pmOut || otOut;
+    const hasTimeData = amIn || pmOut || otOut || isOB;
     let autoSalary = 0;
     
     // Debug logging for OT-only scenarios
@@ -6808,8 +6870,14 @@ function calculateRowDTR(rowNum) {
         console.log(`Row ${rowNum}: OT-only entry detected. OT OUT: ${otOut}, OT hours: ${otHours.toFixed(2)}, OT pay: ${otPay.toFixed(2)}`);
     }
     
-    if (isAbsent) {
+    if (isAbsent || isTraining) {
         autoSalary = 0;
+    } else if (isOB) {
+        // OB day always pays one full day; OT stays in OT summary flow.
+        autoSalary = dailyRate;
+    } else if (isHoliday) {
+        // Holiday: 1 day base pay + encoded work pay - shown deductions.
+        autoSalary = dailyRate + (holidayWorkedHours * hourlyRate) - totalDeductions;
     } else if (hasTimeData) {
         if (!amIn && !pmOut && otOut) {
             // OT-only: no daily rate, OT goes to gross pay total only
@@ -7048,9 +7116,6 @@ function calculateTotals() {
         }
     });
     
-    // Calculate total net deductions (include halfday deduction)
-    const totalNetDeduct = (totalLateDeduct + totalUndertimeDeduct + totalHalfdayDeduct) - totalOTPay;
-    
     // Update totals row - values already in correct units (hours/minutes)
     const workHrsEl = document.getElementById('total_work_hours');
     const workMinsEl = document.getElementById('total_work_mins');
@@ -7088,10 +7153,6 @@ function calculateTotals() {
     updateElement('total_undertime_deduct', formatWithCommas(totalUndertimeDeduct));
     updateElement('total_halfday_deduct', formatWithCommas(totalHalfdayDeduct));
     updateElement('total_ot_payment', formatWithCommas(totalOTPay));
-    
-    // Update net deductions total
-    const netDeductEl = document.getElementById('total_net_deductions');
-    if (netDeductEl) netDeductEl.textContent = formatWithCommas(totalNetDeduct);
     
     // Update new columns totals
     const totalLateMinEl = document.getElementById('total_late_min');
@@ -7191,7 +7252,7 @@ function recalculateAllDTR() {
 
 // Attach event listeners to DTR inputs
 function attachDTRListeners() {
-    document.querySelectorAll('.dtr-input, .dtr-absent, .dtr-date-input').forEach(input => {
+    document.querySelectorAll('.dtr-input, .dtr-absent, .dtr-ob, .dtr-holiday, .dtr-date-input').forEach(input => {
         // Remove existing listener to avoid duplicates
         input.removeEventListener('change', handleDTRInputChange);
         input.removeEventListener('input', handleDTRInputChange);
@@ -7209,6 +7270,16 @@ function attachDTRListeners() {
     document.querySelectorAll('.dtr-training').forEach(checkbox => {
         checkbox.removeEventListener('change', handleTrainingCheckboxChange);
         checkbox.addEventListener('change', handleTrainingCheckboxChange);
+    });
+
+    document.querySelectorAll('.dtr-ob').forEach(checkbox => {
+        checkbox.removeEventListener('change', handleOBCheckboxChange);
+        checkbox.addEventListener('change', handleOBCheckboxChange);
+    });
+
+    document.querySelectorAll('.dtr-holiday').forEach(checkbox => {
+        checkbox.removeEventListener('change', handleHolidayCheckboxChange);
+        checkbox.addEventListener('change', handleHolidayCheckboxChange);
     });
 
     // Attach listeners to per-day override toggles and inputs
@@ -7303,6 +7374,32 @@ function handleAbsentCheckboxChange() {
         }
     }
 
+    // Find and disable/enable OB checkbox
+    const obCheckbox = row.querySelector('.dtr-ob');
+    if (obCheckbox) {
+        if (isAbsent) {
+            obCheckbox.disabled = true;
+            obCheckbox.checked = false;
+            obCheckbox.style.cursor = 'not-allowed';
+        } else {
+            obCheckbox.disabled = false;
+            obCheckbox.style.cursor = 'pointer';
+        }
+    }
+
+    // Find and disable/enable holiday checkbox
+    const holidayCheckbox = row.querySelector('.dtr-holiday');
+    if (holidayCheckbox) {
+        if (isAbsent) {
+            holidayCheckbox.disabled = true;
+            holidayCheckbox.checked = false;
+            holidayCheckbox.style.cursor = 'not-allowed';
+        } else {
+            holidayCheckbox.disabled = false;
+            holidayCheckbox.style.cursor = 'pointer';
+        }
+    }
+
     // Disable per-day override controls when absent is checked
     const dayOverrideToggle = row.querySelector('.dtr-day-override-toggle');
     if (dayOverrideToggle) {
@@ -7355,6 +7452,22 @@ function handleTrainingCheckboxChange() {
             absentCheckbox.checked = false;
             absentCheckbox.disabled = true;
             absentCheckbox.style.cursor = 'not-allowed';
+        }
+
+        // Disable OB checkbox
+        const obCheckbox = row.querySelector('.dtr-ob');
+        if (obCheckbox) {
+            obCheckbox.checked = false;
+            obCheckbox.disabled = true;
+            obCheckbox.style.cursor = 'not-allowed';
+        }
+
+        // Disable holiday checkbox
+        const holidayCheckbox = row.querySelector('.dtr-holiday');
+        if (holidayCheckbox) {
+            holidayCheckbox.checked = false;
+            holidayCheckbox.disabled = true;
+            holidayCheckbox.style.cursor = 'not-allowed';
         }
         
         // Disable all auto-calculation fields except net salary
@@ -7409,6 +7522,20 @@ function handleTrainingCheckboxChange() {
             absentCheckbox.disabled = false;
             absentCheckbox.style.cursor = 'pointer';
         }
+
+        // Enable OB checkbox
+        const obCheckbox = row.querySelector('.dtr-ob');
+        if (obCheckbox) {
+            obCheckbox.disabled = false;
+            obCheckbox.style.cursor = 'pointer';
+        }
+
+        // Enable holiday checkbox
+        const holidayCheckbox = row.querySelector('.dtr-holiday');
+        if (holidayCheckbox) {
+            holidayCheckbox.disabled = false;
+            holidayCheckbox.style.cursor = 'pointer';
+        }
         
         // Enable all calculation fields
         row.querySelectorAll('.dtr-calc, .dtr-deduct, .dtr-pay, .dtr-auto-calc').forEach(input => {
@@ -7456,6 +7583,176 @@ function handleTrainingCheckboxChange() {
     updateCheckedDaysVisuals();
     
     console.log(`Training checkbox changed on row ${rowNum}, totals recalculated`);
+}
+
+// Handler for OB checkbox - full-day pay, OT OUT still allowed
+function handleOBCheckboxChange() {
+    const rowNum = this.getAttribute('data-row');
+    const isOB = this.checked;
+    const row = this.closest('tr');
+
+    if (!row) return;
+
+    const amInInput = row.querySelector(`input[name="am_in_${rowNum}"]`);
+    const pmOutInput = row.querySelector(`input[name="pm_out_${rowNum}"]`);
+    const otOutInput = row.querySelector(`input[name="ot_out_${rowNum}"]`);
+    const absentCheckbox = row.querySelector('.dtr-absent');
+    const trainingCheckbox = row.querySelector('.dtr-training');
+    const holidayCheckbox = row.querySelector('.dtr-holiday');
+
+    const setInputState = (input, disabled, clearValue = false) => {
+        if (!input) return;
+        input.disabled = disabled;
+        if (clearValue) input.value = '';
+        input.style.backgroundColor = disabled ? '#f0f0f0' : '';
+        input.style.cursor = disabled ? 'not-allowed' : '';
+    };
+
+    if (isOB) {
+        setInputState(amInInput, true, true);
+        setInputState(pmOutInput, true, true);
+        setInputState(otOutInput, false, false);
+
+        if (absentCheckbox) {
+            absentCheckbox.checked = false;
+            absentCheckbox.disabled = true;
+            absentCheckbox.style.cursor = 'not-allowed';
+        }
+
+        if (trainingCheckbox) {
+            trainingCheckbox.checked = false;
+            trainingCheckbox.disabled = true;
+            trainingCheckbox.style.cursor = 'not-allowed';
+        }
+
+        if (holidayCheckbox) {
+            holidayCheckbox.checked = false;
+            holidayCheckbox.disabled = true;
+            holidayCheckbox.style.cursor = 'not-allowed';
+        }
+
+        const dayOverrideToggle = row.querySelector('.dtr-day-override-toggle');
+        if (dayOverrideToggle) {
+            if (dayOverrideToggle.checked && String(window.activeDayOverrideRow) === String(rowNum)) {
+                window.activeDayOverrideRow = null;
+                markActiveDayOverrideRow(null);
+                restoreGlobalRateFieldSnapshot();
+                window.globalRateFieldSnapshot = null;
+                updateRatesFromDaily();
+            }
+            dayOverrideToggle.checked = false;
+            dayOverrideToggle.disabled = true;
+            delete window.dayOverrideValues[rowNum];
+        }
+    } else {
+        const absentChecked = absentCheckbox?.checked || false;
+        const trainingChecked = trainingCheckbox?.checked || false;
+        const shouldDisableTime = absentChecked || trainingChecked;
+
+        setInputState(amInInput, shouldDisableTime, false);
+        setInputState(pmOutInput, shouldDisableTime, false);
+        setInputState(otOutInput, shouldDisableTime, false);
+
+        if (absentCheckbox) {
+            absentCheckbox.disabled = false;
+            absentCheckbox.style.cursor = 'pointer';
+        }
+
+        if (trainingCheckbox) {
+            trainingCheckbox.disabled = false;
+            trainingCheckbox.style.cursor = 'pointer';
+        }
+
+        if (holidayCheckbox) {
+            holidayCheckbox.disabled = false;
+            holidayCheckbox.style.cursor = 'pointer';
+        }
+
+        const dayOverrideToggle = row.querySelector('.dtr-day-override-toggle');
+        if (dayOverrideToggle) {
+            dayOverrideToggle.disabled = shouldDisableTime;
+            if (!shouldDisableTime) {
+                applyDayOverrideState(rowNum, dayOverrideToggle.checked);
+            }
+        }
+    }
+
+    updateCheckedDaysVisuals();
+    calculateRowDTR(rowNum);
+}
+
+// Handler for Holiday checkbox - auto 8 hours / 1 day pay while keeping time fields editable
+function handleHolidayCheckboxChange() {
+    const rowNum = this.getAttribute('data-row');
+    const isHoliday = this.checked;
+    const row = this.closest('tr');
+
+    if (!row) return;
+
+    const absentCheckbox = row.querySelector('.dtr-absent');
+    const obCheckbox = row.querySelector('.dtr-ob');
+    const trainingCheckbox = row.querySelector('.dtr-training');
+
+    if (isHoliday) {
+        if (absentCheckbox) {
+            absentCheckbox.checked = false;
+            absentCheckbox.disabled = true;
+            absentCheckbox.style.cursor = 'not-allowed';
+        }
+        if (obCheckbox) {
+            obCheckbox.checked = false;
+            obCheckbox.disabled = true;
+            obCheckbox.style.cursor = 'not-allowed';
+        }
+        if (trainingCheckbox) {
+            trainingCheckbox.checked = false;
+            trainingCheckbox.disabled = true;
+            trainingCheckbox.style.cursor = 'not-allowed';
+        }
+
+        // Keep time fields editable even on holiday.
+        row.querySelectorAll('.dtr-input.time24').forEach(input => {
+            input.disabled = false;
+            input.style.backgroundColor = '';
+            input.style.cursor = '';
+        });
+
+        const dayOverrideToggle = row.querySelector('.dtr-day-override-toggle');
+        if (dayOverrideToggle) {
+            if (dayOverrideToggle.checked && String(window.activeDayOverrideRow) === String(rowNum)) {
+                window.activeDayOverrideRow = null;
+                markActiveDayOverrideRow(null);
+                restoreGlobalRateFieldSnapshot();
+                window.globalRateFieldSnapshot = null;
+                updateRatesFromDaily();
+            }
+            dayOverrideToggle.checked = false;
+            dayOverrideToggle.disabled = true;
+            delete window.dayOverrideValues[rowNum];
+        }
+    } else {
+        if (absentCheckbox) {
+            absentCheckbox.disabled = false;
+            absentCheckbox.style.cursor = 'pointer';
+        }
+        if (obCheckbox) {
+            obCheckbox.disabled = false;
+            obCheckbox.style.cursor = 'pointer';
+        }
+        if (trainingCheckbox) {
+            trainingCheckbox.disabled = false;
+            trainingCheckbox.style.cursor = 'pointer';
+        }
+
+        const dayOverrideToggle = row.querySelector('.dtr-day-override-toggle');
+        if (dayOverrideToggle) {
+            dayOverrideToggle.disabled = false;
+            applyDayOverrideState(rowNum, dayOverrideToggle.checked);
+        }
+    }
+
+    updateCheckedDaysVisuals();
+    calculateRowDTR(rowNum);
 }
 
 // Auto-generate training  remarks based on checked training checkboxes in DTR
@@ -7526,24 +7823,28 @@ function validateRowInputs(rowNum) {
     const amIn = row.querySelector(`input[name="am_in_${rowNum}"]`);
     const pmOut = row.querySelector(`input[name="pm_out_${rowNum}"]`);
     const absentCheckbox = row.querySelector(`input[name="absent_${rowNum}"]`);
+    const obCheckbox = row.querySelector(`input[name="ob_${rowNum}"]`);
+    const holidayCheckbox = row.querySelector(`input[name="holiday_${rowNum}"]`);
+    const trainingCheckbox = row.querySelector(`input[name="training_${rowNum}"]`);
+
+    if (holidayCheckbox && holidayCheckbox.checked) {
+        handleHolidayCheckboxChange.call(holidayCheckbox);
+        return;
+    }
+
+    if (obCheckbox && obCheckbox.checked) {
+        handleOBCheckboxChange.call(obCheckbox);
+        return;
+    }
+
+    if (trainingCheckbox && trainingCheckbox.checked) {
+        handleTrainingCheckboxChange.call(trainingCheckbox);
+        return;
+    }
     
-    // If absent is checked, disable all time inputs and training checkbox
+    // If absent is checked, apply absent state handler
     if (absentCheckbox && absentCheckbox.checked) {
-        const timeInputs = row.querySelectorAll('.dtr-input.time24');
-        timeInputs.forEach(input => {
-            input.disabled = true;
-            input.value = '';
-            input.style.backgroundColor = '#f0f0f0';
-            input.style.cursor = 'not-allowed';
-        });
-        
-        // Also disable training checkbox
-        const trainingCheckbox = row.querySelector('.dtr-training');
-        if (trainingCheckbox) {
-            trainingCheckbox.disabled = true;
-            trainingCheckbox.checked = false;
-            trainingCheckbox.style.cursor = 'not-allowed';
-        }
+        handleAbsentCheckboxChange.call(absentCheckbox);
         return;
     }
 }
@@ -7575,10 +7876,10 @@ function configureForTrainer() {
         otRateContainer.style.display = 'none';
     }
     
-    // Set default daily rate to 500 for trainee
+    // Set profile-based trainer daily rate
     const dailyRateInput = document.getElementById('daily_rate');
     if (dailyRateInput) {
-        dailyRateInput.value = '500.00';
+        dailyRateInput.value = getClassificationPerDayRate(500).toFixed(2);
         dailyRateInput.disabled = false; // Keep it editable
     }
     
@@ -7619,6 +7920,8 @@ function configureForTrainer() {
     
     // Update DTR title to show Trainer classification
     updateDTRTitle('trainer');
+
+    applySalaryRuleToHeader(getSelectedShiftRuleCode(), true);
     
     // Calculate rates from daily rate
     updateRatesFromDaily();
@@ -7642,6 +7945,20 @@ function disableDTRColumnsExceptTrainerFields() {
         if (absentCheckbox) {
             absentCheckbox.disabled = true;
             absentCheckbox.style.cursor = 'not-allowed';
+        }
+
+        // Disable OB checkbox
+        const obCheckbox = row.querySelector('.dtr-ob');
+        if (obCheckbox) {
+            obCheckbox.disabled = true;
+            obCheckbox.style.cursor = 'not-allowed';
+        }
+
+        // Disable holiday checkbox
+        const holidayCheckbox = row.querySelector('.dtr-holiday');
+        if (holidayCheckbox) {
+            holidayCheckbox.disabled = true;
+            holidayCheckbox.style.cursor = 'not-allowed';
         }
         
         // Disable all auto-calculation fields (work hours, late, undertime, OT, absent days, deductions, OT pay, net deduct)
@@ -7732,6 +8049,8 @@ function configureForRegular() {
     
     // Update DTR title to show Regular classification
     updateDTRTitle('regular');
+
+    applySalaryRuleToHeader(getSelectedShiftRuleCode(), true);
     
     // Enable all DTR row inputs
     enableAllDTRColumns();
@@ -7808,6 +8127,21 @@ function configureForFixedRate() {
                 absentCheckbox.disabled = true;
                 absentCheckbox.style.cursor = 'not-allowed';
             }
+
+            // Disable OB checkbox
+            const obCheckbox = row.querySelector('.dtr-ob');
+            if (obCheckbox) {
+                obCheckbox.disabled = true;
+                obCheckbox.checked = false;
+                obCheckbox.style.cursor = 'not-allowed';
+            }
+
+            const holidayCheckbox = row.querySelector('.dtr-holiday');
+            if (holidayCheckbox) {
+                holidayCheckbox.disabled = true;
+                holidayCheckbox.checked = false;
+                holidayCheckbox.style.cursor = 'not-allowed';
+            }
             
             // Disable all auto-calculation fields
             row.querySelectorAll('.dtr-calc, .dtr-deduct, .dtr-pay, .dtr-auto-calc').forEach(input => {
@@ -7841,6 +8175,8 @@ function configureForFixedRate() {
     
     // Update DTR title to show Fixed Rate classification
     updateDTRTitle('fixedrate');
+
+    applySalaryRuleToHeader(getSelectedShiftRuleCode(), true);
 }
 
 /**
@@ -7878,9 +8214,16 @@ function enableAllDTRColumns() {
         // Enable time inputs (unless disabled by absent checkbox)
         const absentCheckbox = row.querySelector('.dtr-absent');
         const isAbsent = absentCheckbox && absentCheckbox.checked;
+        const trainingCheckbox = row.querySelector('.dtr-training');
+        const isTraining = trainingCheckbox && trainingCheckbox.checked;
+        const obCheckbox = row.querySelector('.dtr-ob');
+        const isOB = obCheckbox && obCheckbox.checked;
+        const holidayCheckbox = row.querySelector('.dtr-holiday');
+        const isHoliday = holidayCheckbox && holidayCheckbox.checked;
+        const disableTime = isAbsent || isTraining || isOB;
         
         row.querySelectorAll('.dtr-input.time24').forEach(input => {
-            if (!isAbsent) {
+            if (!disableTime) {
                 input.disabled = false;
                 input.style.backgroundColor = '';
                 input.style.cursor = '';
@@ -7889,15 +8232,24 @@ function enableAllDTRColumns() {
         
         // Enable absent checkbox
         if (absentCheckbox) {
-            absentCheckbox.disabled = false;
-            absentCheckbox.style.cursor = 'pointer';
+            absentCheckbox.disabled = !!isHoliday;
+            absentCheckbox.style.cursor = isHoliday ? 'not-allowed' : 'pointer';
+        }
+
+        if (obCheckbox) {
+            obCheckbox.disabled = !!isHoliday;
+            obCheckbox.style.cursor = isHoliday ? 'not-allowed' : 'pointer';
+        }
+
+        if (holidayCheckbox) {
+            holidayCheckbox.disabled = false;
+            holidayCheckbox.style.cursor = 'pointer';
         }
         
         // Enable training checkbox
-        const trainingCheckbox = row.querySelector('.dtr-training');
         if (trainingCheckbox) {
-            trainingCheckbox.disabled = false;
-            trainingCheckbox.style.cursor = 'pointer';
+            trainingCheckbox.disabled = !!isHoliday;
+            trainingCheckbox.style.cursor = isHoliday ? 'not-allowed' : 'pointer';
         }
         
         // Enable government benefits input
@@ -7975,19 +8327,8 @@ document.getElementById('employee_select').addEventListener('change', function()
             // Set hidden form values
             document.getElementById('form_employee_id').value = employeeId;
             
-            // Set rate fields (skip if trainer - already set to 500)
-            if (classification && classification.toLowerCase() === 'trainer') {
-                // For trainer, daily rate is already set to 500 by configureForTrainer()
-                // But allow override if data has a specific rate
-                if (data.per_day_rate) {
-                    document.getElementById('daily_rate').value = data.per_day_rate;
-                }
-            } else {
-                // For regular employees, use data from database
-                if (data.per_hour_rate) document.getElementById('hourly_rate').value = data.per_hour_rate;
-                document.getElementById('ot_rate').value = data.overtime_rate ? data.overtime_rate : '0.00';
-                if (data.per_day_rate) document.getElementById('daily_rate').value = data.per_day_rate;
-            }
+            // Keep salary rules as source of truth for per-day/OT/time defaults.
+            applySalaryRuleToHeader(getSelectedShiftRuleCode(), true);
             
             // Update TB5 header with employee name
             const tb5NameEl = document.getElementById('tb5_employee_name');
@@ -8929,11 +9270,12 @@ function calculateTB5Row(day) {
     
     // OT pay = OT rate × OT hours (direct multiplication, no hidden multiplier)
     const manualOtRate = parseFloat(document.getElementById('ot_rate')?.value) || 0;
+    const effectiveOtRate = manualOtRate > 0 ? manualOtRate : hourlyRate;
 
     // Calculate deductions
     const lateDed = equivalentLateHrs * hourlyRate;
     const utDed = utHrs * hourlyRate;
-    const otPay = otHrs * manualOtRate;
+    const otPay = otHrs * effectiveOtRate;
     
     // Update display using helper
     setCell(`.tb5-work-mins[data-day="${day}"]`, workMins);
@@ -9411,6 +9753,8 @@ function saveMainDTRToDatabase() {
             pm_in:          row.querySelector(`input[name="pm_in_${rowNum}"]`)?.value        || '',
             pm_out:         row.querySelector(`input[name="pm_out_${rowNum}"]`)?.value       || '',
             is_absent:      row.querySelector(`input[name="absent_${rowNum}"]`)?.checked ? 1 : 0,
+            is_ob:          row.querySelector(`input[name="ob_${rowNum}"]`)?.checked ? 1 : 0,
+            is_holiday:     row.querySelector(`input[name="holiday_${rowNum}"]`)?.checked ? 1 : 0,
             is_training:    row.querySelector(`input[name="training_${rowNum}"]`)?.checked ? 1 : 0,
             ot_out:         row.querySelector(`input[name="ot_out_${rowNum}"]`)?.value       || '',
             half_in:        row.querySelector(`input[name="halfday_in_${rowNum}"]`)?.value   || '',
@@ -9460,7 +9804,7 @@ function saveMainDTRToDatabase() {
     const totalOtPay        = parseFormattedNumber(document.getElementById('total_ot_payment')?.textContent);
     const totalSalary       = parseFormattedNumber(document.getElementById('total_salary')?.textContent);
     const totalGovtDeduct   = parseFormattedNumber(document.getElementById('total_govt')?.textContent);
-    const daysWorked        = dtrRecords.filter(r => !r.is_absent).length;
+    const daysWorked        = dtrRecords.filter(r => !r.is_absent && !r.is_training).length;
 
     // Calculate absent deduction = absent days × per-day rate
     const perDayForAbsent = parseFormattedNumber(document.getElementById('daily_rate')?.value) || 0;
@@ -10451,29 +10795,8 @@ function populateMainDTRFromImport(data) {
         console.log('populateMainDTRFromImport: Set basic_monthly_salary to', salaryNum, '- cleared stale originalMonthlyValue');
     }
     
-    // Set per day rate from imported data
-    const dailyRateField = document.getElementById('daily_rate');
-    if (dailyRateField) {
-        let perDayVal = parseFloat(empInfo.per_day_rate) || 0;
-        // If per day rate not in Excel but basic salary exists, compute it
-        if (perDayVal === 0 && empInfo.basic_monthly_salary) {
-            perDayVal = parseFloat(empInfo.basic_monthly_salary) / 26;
-        }
-        if (perDayVal > 0) {
-            dailyRateField.value = perDayVal.toLocaleString('en-US', {minimumFractionDigits: 2, maximumFractionDigits: 2});
-        }
-    }
-
-    // Set OT rate input from imported data if provided; otherwise keep it at 0.00.
-    const otField = document.getElementById('ot_rate');
-    if (otField) {
-        let otVal = parseFloat(empInfo.ot_rate) || 0;
-        if (otVal > 0) {
-            otField.value = Number(otVal).toFixed(2);
-        } else {
-            otField.value = '0.00';
-        }
-    }
+    // Keep profile rates from settings as the calculation source.
+    applySalaryRuleToHeader(getSelectedShiftRuleCode(), true);
     
     const normalizeIsoDate = (value) => {
         const raw = String(value || '').trim();
@@ -11001,6 +11324,7 @@ function populateDTRFromData(dtrData) {
     
     // Recalculate all rows
     dtrData.forEach((record, index) => {
+        validateRowInputs(index + 1);
         calculateRowDTR(index + 1);
     });
 }
@@ -11039,6 +11363,8 @@ function createDTRRowFromData(rowNum, data) {
     }
     
     const isAbsent = data.is_absent ? true : false;
+    const isOB = data.is_ob ? true : false;
+    const isHoliday = data.is_holiday ? true : false;
     const isTraining = data.is_training ? true : false;
     const isDayOverride = data.day_override_enabled ? true : false;
     const disabledAttr = isAbsent ? 'disabled' : '';
@@ -11096,6 +11422,8 @@ function createDTRRowFromData(rowNum, data) {
         <td><input type="text" name="am_in_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="8:00" maxlength="5" oninput="formatTime24(this)" ${disabledAttr} ${disabledStyle}></td>
         <td><input type="text" name="pm_out_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="17:00" maxlength="5" oninput="formatTime24(this)" ${disabledAttr} ${disabledStyle}></td>
         <td class="centered"><input type="checkbox" name="absent_${rowNum}" data-row="${rowNum}" class="dtr-absent" ${isAbsent ? 'checked' : ''}></td>
+        <td class="centered"><input type="checkbox" name="ob_${rowNum}" data-row="${rowNum}" class="dtr-ob" ${isOB ? 'checked' : ''}></td>
+        <td class="centered"><input type="checkbox" name="holiday_${rowNum}" data-row="${rowNum}" class="dtr-holiday" ${isHoliday ? 'checked' : ''}></td>
         <td class="centered"><input type="checkbox" name="training_${rowNum}" data-row="${rowNum}" class="dtr-training" ${isTraining ? 'checked' : ''}></td>
         <td><input type="text" name="ot_out_${rowNum}" data-row="${rowNum}" class="dtr-input time24" autocomplete="off" placeholder="18:00" maxlength="5" oninput="formatTime24(this)" ${disabledAttr} ${disabledStyle}></td>
         <td><input type="number" name="work_hours_${rowNum}" data-row="${rowNum}" class="dtr-calc calc-highlight" readonly value="${serverWorkHours.toFixed(2)}" step="1" title="Total work hours"></td>
@@ -11107,7 +11435,6 @@ function createDTRRowFromData(rowNum, data) {
         <td><input type="number" name="undertime_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Undertime deduction"></td>
         <td><input type="number" name="halfday_deduct_${rowNum}" data-row="${rowNum}" class="dtr-deduct deduct-highlight" readonly value="0.00" step="0.01" title="Halfday deduction (auto-calculated when work hours < 4)"></td>
         <td><input type="number" name="ot_pay_${rowNum}" data-row="${rowNum}" class="dtr-pay pay-highlight" readonly value="0.00" step="0.01" title="OT payment"></td>
-        <td><input type="number" name="net_deduct_${rowNum}" data-row="${rowNum}" class="dtr-calc net-deduct-highlight" readonly value="0.00" step="0.01" title="Total deductions minus OT pay"></td>
         <td><input type="number" name="late_min_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Late in minutes calculation"></td>
         <td><input type="number" name="undertime_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="Undertime calculation"></td>
         <td><input type="number" name="ot_calc_${rowNum}" data-row="${rowNum}" class="dtr-auto-calc" readonly value="0.00" step="0.01" title="OT calculation"></td>
@@ -11286,6 +11613,7 @@ function exportDTRToExcel() {
             pmOut: pmOutInput?.value || '',
             otOut: otOutInput?.value || '',
             absent: absentInput?.checked || false,
+            holiday: document.querySelector(`input[name="holiday_${rowNum}"]`)?.checked || false,
             training: trainingInput?.checked || false,
             govt: parseFloat(govtInput?.value) || 0,
             remarks: remarksInput?.value || '',
@@ -11299,7 +11627,11 @@ function exportDTRToExcel() {
             undertimeDeduct: parseFloat(document.querySelector(`input[name="undertime_deduct_${rowNum}"]`)?.value) || 0,
             halfdayDeduct: parseFloat(document.querySelector(`input[name="halfday_deduct_${rowNum}"]`)?.value) || 0,
             otPay: parseFloat(document.querySelector(`input[name="ot_pay_${rowNum}"]`)?.value) || 0,
-            netDeduct: parseFloat(document.querySelector(`input[name="net_deduct_${rowNum}"]`)?.value) || 0,
+            netDeduct: (
+                (parseFloat(document.querySelector(`input[name="late_deduct_${rowNum}"]`)?.value) || 0) +
+                (parseFloat(document.querySelector(`input[name="undertime_deduct_${rowNum}"]`)?.value) || 0) +
+                (parseFloat(document.querySelector(`input[name="halfday_deduct_${rowNum}"]`)?.value) || 0)
+            ) - (parseFloat(document.querySelector(`input[name="ot_pay_${rowNum}"]`)?.value) || 0),
             lateMinCalc: parseFloat(document.querySelector(`input[name="late_min_calc_${rowNum}"]`)?.value) || 0,
             undertimeCalc: parseFloat(document.querySelector(`input[name="undertime_calc_${rowNum}"]`)?.value) || 0,
             otCalc: parseFloat(document.querySelector(`input[name="ot_calc_${rowNum}"]`)?.value) || 0,

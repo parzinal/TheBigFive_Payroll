@@ -294,7 +294,7 @@ function ensureSalaryRulesTable(PDO $pdo): void {
 }
 
 function ensurePayrollRuleSettingsTable(PDO $pdo): void {
-    $pdo->exec("\n        CREATE TABLE IF NOT EXISTS payroll_rule_settings (\n            id TINYINT UNSIGNED PRIMARY KEY,\n            late_rule_1_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_1_equivalent_minutes DECIMAL(10,2) NULL,\n            late_rule_2_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_2_equivalent_minutes DECIMAL(10,2) NULL,\n            late_rule_3_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_3_equivalent_minutes DECIMAL(10,2) NULL,\n            updated_by INT NULL,\n            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP\n        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci\n    ");
+    $pdo->exec("\n        CREATE TABLE IF NOT EXISTS payroll_rule_settings (\n            id TINYINT UNSIGNED PRIMARY KEY,\n            late_rule_1_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_1_equivalent_minutes DECIMAL(10,2) NULL,\n            late_rule_2_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_2_equivalent_minutes DECIMAL(10,2) NULL,\n            late_rule_3_actual_minutes DECIMAL(10,2) NULL,\n            late_rule_3_equivalent_minutes DECIMAL(10,2) NULL,\n            fixed_per_day_rate DECIMAL(12,2) NOT NULL DEFAULT 0,\n            trainer_per_day_rate DECIMAL(12,2) NOT NULL DEFAULT 500,\n            grace_period_minutes INT NOT NULL DEFAULT 5,\n            updated_by INT NULL,\n            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,\n            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP\n        ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci\n    ");
 
     // Backward-compatible migration for existing single-rule tables.
     try {
@@ -324,6 +324,21 @@ function ensurePayrollRuleSettingsTable(PDO $pdo): void {
     }
     try {
         $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN late_rule_3_equivalent_minutes DECIMAL(10,2) NULL AFTER late_rule_3_actual_minutes");
+    } catch (\Throwable $e) {
+        // Ignore if column already exists.
+    }
+    try {
+        $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN fixed_per_day_rate DECIMAL(12,2) NOT NULL DEFAULT 0 AFTER late_rule_3_equivalent_minutes");
+    } catch (\Throwable $e) {
+        // Ignore if column already exists.
+    }
+    try {
+        $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN trainer_per_day_rate DECIMAL(12,2) NOT NULL DEFAULT 500 AFTER fixed_per_day_rate");
+    } catch (\Throwable $e) {
+        // Ignore if column already exists.
+    }
+    try {
+        $pdo->exec("ALTER TABLE payroll_rule_settings ADD COLUMN grace_period_minutes INT NOT NULL DEFAULT 5 AFTER trainer_per_day_rate");
     } catch (\Throwable $e) {
         // Ignore if column already exists.
     }
@@ -361,6 +376,17 @@ function normalizeRuleMinutesOrNull($value): ?float {
         return null;
     }
     return round(min(1440.0, $num), 2);
+}
+
+function normalizeRuleGraceMinutes($value, int $fallback = 5): int {
+    $num = intval($value);
+    if (!is_finite($num)) {
+        return $fallback;
+    }
+    if ($num < 0) {
+        return 0;
+    }
+    return min(120, $num);
 }
 
 // Get the action
@@ -799,10 +825,17 @@ try {
                 }
             }
 
+            $rateProfile = [
+                'fixed_per_day_rate' => normalizeRuleRate($lateRuleRow['fixed_per_day_rate'] ?? 0),
+                'trainer_per_day_rate' => normalizeRuleRate($lateRuleRow['trainer_per_day_rate'] ?? 500),
+                'grace_period_minutes' => normalizeRuleGraceMinutes($lateRuleRow['grace_period_minutes'] ?? 5, 5),
+            ];
+
             echo json_encode([
                 'success' => true,
                 'rules' => $rules,
                 'late_rules' => $lateRules,
+                'rate_profile' => $rateProfile,
                 // Backward-compatible legacy shape for older consumers.
                 'late_rule' => $legacyLateRule,
             ]);
@@ -816,17 +849,35 @@ try {
             ensureSalaryRulesTable($pdo);
             ensurePayrollRuleSettingsTable($pdo);
 
+            $existingPerDayRates = [
+                'shift_1' => 0.0,
+                'shift_2' => 0.0,
+            ];
+            $existingRateStmt = $pdo->query("SELECT shift_code, per_day_rate FROM payroll_shift_rules WHERE shift_code IN ('shift_1', 'shift_2')");
+            while ($existingRateRow = $existingRateStmt->fetch(PDO::FETCH_ASSOC)) {
+                $code = $existingRateRow['shift_code'] ?? '';
+                if (isset($existingPerDayRates[$code])) {
+                    $existingPerDayRates[$code] = normalizeRuleRate($existingRateRow['per_day_rate'] ?? 0);
+                }
+            }
+
+            $rateProfile = [
+                'fixed_per_day_rate' => normalizeRuleRate($_POST['fixed_per_day_rate'] ?? 0),
+                'trainer_per_day_rate' => normalizeRuleRate($_POST['trainer_per_day_rate'] ?? 500),
+                'grace_period_minutes' => normalizeRuleGraceMinutes($_POST['grace_period_minutes'] ?? 5, 5),
+            ];
+
             $rulesToSave = [
                 'shift_1' => [
                     'shift_name' => trim((string)($_POST['shift_1_name'] ?? 'Shift 1')) ?: 'Shift 1',
-                    'per_day_rate' => normalizeRuleRate($_POST['shift_1_per_day_rate'] ?? 0),
+                    'per_day_rate' => normalizeRuleRate($_POST['shift_1_per_day_rate'] ?? $existingPerDayRates['shift_1']),
                     'ot_rate' => normalizeRuleRate($_POST['shift_1_ot_rate'] ?? 0),
                     'time_in' => normalizeRuleTime((string)($_POST['shift_1_time_in'] ?? '08:00'), '08:00'),
                     'time_out' => normalizeRuleTime((string)($_POST['shift_1_time_out'] ?? '17:00'), '17:00'),
                 ],
                 'shift_2' => [
                     'shift_name' => trim((string)($_POST['shift_2_name'] ?? 'Shift 2')) ?: 'Shift 2',
-                    'per_day_rate' => normalizeRuleRate($_POST['shift_2_per_day_rate'] ?? 0),
+                    'per_day_rate' => normalizeRuleRate($_POST['shift_2_per_day_rate'] ?? $existingPerDayRates['shift_2']),
                     'ot_rate' => normalizeRuleRate($_POST['shift_2_ot_rate'] ?? 0),
                     'time_in' => normalizeRuleTime((string)($_POST['shift_2_time_in'] ?? '08:00'), '08:00'),
                     'time_out' => normalizeRuleTime((string)($_POST['shift_2_time_out'] ?? '17:00'), '17:00'),
@@ -862,7 +913,7 @@ try {
                 ]);
             }
 
-            $lateRuleStmt = $pdo->prepare("\n                INSERT INTO payroll_rule_settings (id, late_rule_1_actual_minutes, late_rule_1_equivalent_minutes, late_rule_2_actual_minutes, late_rule_2_equivalent_minutes, late_rule_3_actual_minutes, late_rule_3_equivalent_minutes, updated_by)\n                VALUES (1, ?, ?, ?, ?, ?, ?, ?)\n                ON DUPLICATE KEY UPDATE\n                    late_rule_1_actual_minutes = VALUES(late_rule_1_actual_minutes),\n                    late_rule_1_equivalent_minutes = VALUES(late_rule_1_equivalent_minutes),\n                    late_rule_2_actual_minutes = VALUES(late_rule_2_actual_minutes),\n                    late_rule_2_equivalent_minutes = VALUES(late_rule_2_equivalent_minutes),\n                    late_rule_3_actual_minutes = VALUES(late_rule_3_actual_minutes),\n                    late_rule_3_equivalent_minutes = VALUES(late_rule_3_equivalent_minutes),\n                    updated_by = VALUES(updated_by),\n                    updated_at = CURRENT_TIMESTAMP\n            ");
+            $lateRuleStmt = $pdo->prepare("\n                INSERT INTO payroll_rule_settings (id, late_rule_1_actual_minutes, late_rule_1_equivalent_minutes, late_rule_2_actual_minutes, late_rule_2_equivalent_minutes, late_rule_3_actual_minutes, late_rule_3_equivalent_minutes, fixed_per_day_rate, trainer_per_day_rate, grace_period_minutes, updated_by)\n                VALUES (1, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)\n                ON DUPLICATE KEY UPDATE\n                    late_rule_1_actual_minutes = VALUES(late_rule_1_actual_minutes),\n                    late_rule_1_equivalent_minutes = VALUES(late_rule_1_equivalent_minutes),\n                    late_rule_2_actual_minutes = VALUES(late_rule_2_actual_minutes),\n                    late_rule_2_equivalent_minutes = VALUES(late_rule_2_equivalent_minutes),\n                    late_rule_3_actual_minutes = VALUES(late_rule_3_actual_minutes),\n                    late_rule_3_equivalent_minutes = VALUES(late_rule_3_equivalent_minutes),\n                    fixed_per_day_rate = VALUES(fixed_per_day_rate),\n                    trainer_per_day_rate = VALUES(trainer_per_day_rate),\n                    grace_period_minutes = VALUES(grace_period_minutes),\n                    updated_by = VALUES(updated_by),\n                    updated_at = CURRENT_TIMESTAMP\n            ");
             $lateRuleStmt->execute([
                 $lateRules[0]['actual_minutes'],
                 $lateRules[0]['equivalent_minutes'],
@@ -870,6 +921,9 @@ try {
                 $lateRules[1]['equivalent_minutes'],
                 $lateRules[2]['actual_minutes'],
                 $lateRules[2]['equivalent_minutes'],
+                $rateProfile['fixed_per_day_rate'],
+                $rateProfile['trainer_per_day_rate'],
+                $rateProfile['grace_period_minutes'],
                 $_SESSION['user_id'] ?? null,
             ]);
 
@@ -895,15 +949,16 @@ try {
                     'Updated salary rules for Shift 1 and Shift 2',
                     'update',
                     sprintf(
-                        'Shift 1: per-day %s, OT %s @ %s-%s | Shift 2: per-day %s, OT %s @ %s-%s | Late rules: %s',
-                        number_format($rulesToSave['shift_1']['per_day_rate'], 2),
+                        'Shift 1: OT %s @ %s-%s | Shift 2: OT %s @ %s-%s | Rate Profile: Fixed %s, Trainer %s, Grace %s min | Late rules: %s',
                         number_format($rulesToSave['shift_1']['ot_rate'], 2),
                         $rulesToSave['shift_1']['time_in'],
                         $rulesToSave['shift_1']['time_out'],
-                        number_format($rulesToSave['shift_2']['per_day_rate'], 2),
                         number_format($rulesToSave['shift_2']['ot_rate'], 2),
                         $rulesToSave['shift_2']['time_in'],
                         $rulesToSave['shift_2']['time_out'],
+                        number_format($rateProfile['fixed_per_day_rate'], 2),
+                        number_format($rateProfile['trainer_per_day_rate'], 2),
+                        $rateProfile['grace_period_minutes'],
                         $lateRuleLog
                     ),
                     getDBConnection()
@@ -925,6 +980,7 @@ try {
                 'message' => 'Salary rules saved successfully',
                 'rules' => $rulesToSave,
                 'late_rules' => $lateRules,
+                'rate_profile' => $rateProfile,
                 // Backward-compatible legacy shape for older consumers.
                 'late_rule' => $legacyLateRule,
             ]);
